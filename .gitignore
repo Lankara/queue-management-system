@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 .pnpm-store/
 .npm/
@@ -37,6 +37,8 @@ postgres-data/
 .env
 .env.*
 !.env.example
+!.env.production.example
+!apps/*/.env.production.example
 
 # Logs
 logs/
