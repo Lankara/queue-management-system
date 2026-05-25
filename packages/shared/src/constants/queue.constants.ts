@@ -1,0 +1,3 @@
+export const QUEUE_NUMBER_PAD_CHARACTER = '0';
+export const MIN_QUEUE_NUMBER_LENGTH = 1;
+export const MAX_QUEUE_NUMBER_LENGTH = 6;

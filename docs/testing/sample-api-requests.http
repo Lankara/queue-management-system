@@ -1,0 +1,204 @@
+@baseUrl = http://localhost:4000/api
+@businessId = 00000000-0000-0000-0000-000000000101
+@branchId = 00000000-0000-0000-0000-000000000102
+@serviceId = 00000000-0000-0000-0000-000000000103
+@customerId = 00000000-0000-0000-0000-000000000104
+@clientProfileId = 00000000-0000-0000-0000-000000000105
+@queueEntryId =
+@queueId =
+@appointmentId =
+
+### 1. API health
+GET {{baseUrl}}/health
+
+### 2. Database health
+GET {{baseUrl}}/health/db
+
+### 3. Create business
+POST {{baseUrl}}/businesses
+Content-Type: application/json
+
+{
+  "name": "City Care Medical Center",
+  "slug": "city-care-medical",
+  "businessType": "MEDICAL_CENTER",
+  "defaultLanguage": "en",
+  "timezone": "Asia/Colombo",
+  "phone": "+94112345678",
+  "email": "info@citycare.test",
+  "address": "Main Street, Colombo",
+  "isActive": true
+}
+
+### 4. Create branch
+POST {{baseUrl}}/businesses/{{businessId}}/branches
+Content-Type: application/json
+
+{
+  "name": "Main Branch",
+  "code": "MAIN",
+  "address": "Main Street, Colombo",
+  "phone": "+94112345678",
+  "isActive": true
+}
+
+### 5. Create service
+POST {{baseUrl}}/businesses/{{businessId}}/services
+Content-Type: application/json
+
+{
+  "branchId": "{{branchId}}",
+  "name": "General Practice",
+  "code": "GP",
+  "description": "General doctor consultation",
+  "durationMinutes": 15,
+  "requiresApproval": true,
+  "isActive": true
+}
+
+### 6. Get profile settings
+GET {{baseUrl}}/businesses/{{businessId}}/profile-settings
+
+### 7. Create customer
+POST {{baseUrl}}/businesses/{{businessId}}/customers
+Content-Type: application/json
+
+{
+  "primaryPhone": "+94771234567",
+  "preferredLanguage": "en"
+}
+
+### 8. Create client profile
+POST {{baseUrl}}/businesses/{{businessId}}/customers/{{customerId}}/client-profiles
+Content-Type: application/json
+
+{
+  "fullName": "Test Patient",
+  "relationshipToContact": "SELF",
+  "gender": "NOT_SPECIFIED",
+  "ageYears": 35,
+  "address": "Colombo",
+  "notes": "Smoke test client profile"
+}
+
+### 9. Create medical profile
+POST {{baseUrl}}/businesses/{{businessId}}/client-profiles/{{clientProfileId}}/medical-profile
+Content-Type: application/json
+
+{
+  "bloodGroup": "O+",
+  "allergies": "None known",
+  "medicalHistory": "No major history",
+  "currentSymptoms": "Fever",
+  "previousVisitNotes": "First visit",
+  "emergencyContactName": "Test Contact",
+  "emergencyContactPhone": "+94770000000"
+}
+
+### 10. Join queue draft
+POST {{baseUrl}}/businesses/{{businessId}}/queues/join-draft
+Content-Type: application/json
+
+{
+  "branchId": "{{branchId}}",
+  "serviceId": "{{serviceId}}",
+  "customerId": "{{customerId}}",
+  "clientProfileId": "{{clientProfileId}}",
+  "source": "QR"
+}
+
+### 11. Confirm queue entry
+PATCH {{baseUrl}}/businesses/{{businessId}}/queue-entries/{{queueEntryId}}/confirm
+Content-Type: application/json
+
+{}
+
+### 12. Get queue position and create notification log
+GET {{baseUrl}}/businesses/{{businessId}}/queue-entries/{{queueEntryId}}/position?logNotification=true
+
+### 13. List today queues
+GET {{baseUrl}}/businesses/{{businessId}}/queues/today?branchId={{branchId}}&serviceId={{serviceId}}
+
+### 14. List queue entries
+GET {{baseUrl}}/businesses/{{businessId}}/queues/{{queueId}}/entries
+
+### 15. Call next queue entry
+PATCH {{baseUrl}}/businesses/{{businessId}}/queues/{{queueId}}/call-next
+Content-Type: application/json
+
+{}
+
+### 16. Start service
+PATCH {{baseUrl}}/businesses/{{businessId}}/queue-entries/{{queueEntryId}}/start-service
+
+### 17. Complete service
+PATCH {{baseUrl}}/businesses/{{businessId}}/queue-entries/{{queueEntryId}}/complete
+
+### 18. Request appointment
+POST {{baseUrl}}/businesses/{{businessId}}/appointments/request
+Content-Type: application/json
+
+{
+  "branchId": "{{branchId}}",
+  "serviceId": "{{serviceId}}",
+  "customerId": "{{customerId}}",
+  "clientProfileId": "{{clientProfileId}}",
+  "requestedStartTime": "2026-06-01T09:00:00+05:30",
+  "requestedEndTime": "2026-06-01T09:15:00+05:30"
+}
+
+### 19. Approve appointment
+PATCH {{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/approve
+Content-Type: application/json
+
+{
+  "approvedStartTime": "2026-06-01T09:00:00+05:30",
+  "approvedEndTime": "2026-06-01T09:15:00+05:30",
+  "source": "OPERATOR"
+}
+
+### 20. Propose reschedule
+PATCH {{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/propose-reschedule
+Content-Type: application/json
+
+{
+  "newStartTime": "2026-06-01T09:30:00+05:30",
+  "newEndTime": "2026-06-01T09:45:00+05:30",
+  "reason": "Doctor requested a later slot"
+}
+
+### 21. Accept reschedule
+PATCH {{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/accept-reschedule
+Content-Type: application/json
+
+{}
+
+### 22. Create delay event
+POST {{baseUrl}}/businesses/{{businessId}}/delays
+Content-Type: application/json
+
+{
+  "branchId": "{{branchId}}",
+  "serviceId": "{{serviceId}}",
+  "delayMinutes": 20,
+  "affectedFromTime": "2026-06-01T09:00:00+05:30",
+  "reason": "Doctor delayed"
+}
+
+### 23. List notifications
+GET {{baseUrl}}/businesses/{{businessId}}/notifications
+
+### 24. Render notification template
+POST {{baseUrl}}/businesses/{{businessId}}/notifications/render
+Content-Type: application/json
+
+{
+  "language": "en",
+  "templateKey": "QUEUE_CONFIRMED",
+  "channel": "WHATSAPP",
+  "variables": {
+    "customer_name": "Test Patient",
+    "business_name": "City Care Medical Center",
+    "queue_number": "000"
+  }
+}

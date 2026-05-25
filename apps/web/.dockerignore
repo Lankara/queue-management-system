@@ -1,0 +1,10 @@
+﻿node_modules
+dist
+.next
+coverage
+logs
+*.log
+.env
+.env.*
+!.env.example
+!.env.docker.example

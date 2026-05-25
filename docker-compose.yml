@@ -1,0 +1,118 @@
+﻿name: queue-management-system
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: qms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-queue_management_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qms-network
+
+  api:
+    container_name: qms-api
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 4000
+      API_JSON_BODY_LIMIT: ${API_JSON_BODY_LIMIT:-1mb}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/queue_management_db}
+      DATABASE_SSL: ${DATABASE_SSL:-false}
+      JWT_SECRET: ${JWT_SECRET:-change-this-local-docker-secret}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+      PUBLIC_RATE_LIMIT_WINDOW_MS: ${PUBLIC_RATE_LIMIT_WINDOW_MS:-60000}
+      PUBLIC_RATE_LIMIT_MAX_REQUESTS: ${PUBLIC_RATE_LIMIT_MAX_REQUESTS:-60}
+      WHATSAPP_WEBHOOK_RATE_LIMIT_MAX_REQUESTS: ${WHATSAPP_WEBHOOK_RATE_LIMIT_MAX_REQUESTS:-120}
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-whatsapp-cloud-api}
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_DEV_MODE: ${WHATSAPP_DEV_MODE:-true}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v20.0}
+      WHATSAPP_GRAPH_BASE_URL: ${WHATSAPP_GRAPH_BASE_URL:-https://graph.facebook.com}
+      WHATSAPP_DEFAULT_COUNTRY_CODE: ${WHATSAPP_DEFAULT_COUNTRY_CODE:-94}
+      WHATSAPP_WEBHOOK_VERIFY_TOKEN: ${WHATSAPP_WEBHOOK_VERIFY_TOKEN:-change-this-webhook-token}
+      WHATSAPP_WEBHOOK_APP_SECRET: ${WHATSAPP_WEBHOOK_APP_SECRET:-}
+      WHATSAPP_INBOUND_ENABLED: ${WHATSAPP_INBOUND_ENABLED:-false}
+      WHATSAPP_INBOUND_DEV_MODE: ${WHATSAPP_INBOUND_DEV_MODE:-true}
+      WHATSAPP_DEFAULT_BUSINESS_SLUG: ${WHATSAPP_DEFAULT_BUSINESS_SLUG:-city-care-medical}
+    ports:
+      - "${API_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - qms-network
+
+  web:
+    container_name: qms-web
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000/api}
+        NEXT_PUBLIC_PUBLIC_APP_URL: ${NEXT_PUBLIC_PUBLIC_APP_URL:-http://localhost:3000}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000/api}
+      NEXT_PUBLIC_PUBLIC_APP_URL: ${NEXT_PUBLIC_PUBLIC_APP_URL:-http://localhost:3000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    networks:
+      - qms-network
+
+  worker:
+    container_name: qms-worker
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      WORKER_API_BASE_URL: ${WORKER_API_BASE_URL:-http://api:4000/api}
+      WORKER_API_ACCESS_TOKEN: ${WORKER_API_ACCESS_TOKEN:-}
+      NOTIFICATION_WORKER_ENABLED: ${NOTIFICATION_WORKER_ENABLED:-false}
+      NOTIFICATION_WORKER_POLL_INTERVAL_MS: ${NOTIFICATION_WORKER_POLL_INTERVAL_MS:-15000}
+      NOTIFICATION_WORKER_BATCH_SIZE: ${NOTIFICATION_WORKER_BATCH_SIZE:-25}
+      NOTIFICATION_WORKER_RETRY_DELAY_MS: ${NOTIFICATION_WORKER_RETRY_DELAY_MS:-5000}
+      NOTIFICATION_WORKER_HEARTBEAT_EVERY_POLLS: ${NOTIFICATION_WORKER_HEARTBEAT_EVERY_POLLS:-10}
+    networks:
+      - qms-network
+
+volumes:
+  postgres_data:
+
+networks:
+  qms-network:
+    driver: bridge

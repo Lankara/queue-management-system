@@ -1,0 +1,26 @@
+{
+    "name":  "queue-management-system",
+    "version":  "0.0.0",
+    "private":  true,
+    "description":  "Queue Management System monorepo.",
+    "scripts":  {
+                    "dev":  "turbo dev",
+                    "build":  "turbo build",
+                    "lint":  "turbo lint",
+                    "typecheck":  "turbo typecheck",
+                    "format":  "turbo format",
+                    "clean":  "turbo clean",
+                    "smoke:api":  "powershell -ExecutionPolicy Bypass -File scripts/api-smoke/run-all.ps1",
+                    "web:dev":  "pnpm --filter @queue-management/web dev",
+                    "web:build":  "pnpm --filter @queue-management/web build",
+                    "docker:up":  "powershell -ExecutionPolicy Bypass -File scripts/docker/start-local.ps1",
+                    "docker:down":  "powershell -ExecutionPolicy Bypass -File scripts/docker/stop-local.ps1",
+                    "docker:build":  "powershell -ExecutionPolicy Bypass -File scripts/docker/rebuild-local.ps1",
+                    "db:migrate":  "powershell -ExecutionPolicy Bypass -File scripts/db/migrate.ps1",
+                    "db:seed":  "powershell -ExecutionPolicy Bypass -File scripts/db/seed.ps1",
+                    "db:setup":  "powershell -ExecutionPolicy Bypass -File scripts/db/setup.ps1",
+                    "db:validate":  "powershell -ExecutionPolicy Bypass -File scripts/db/validate.ps1",
+                    "db:reset:dev":  "powershell -ExecutionPolicy Bypass -File scripts/db/reset-dev.ps1 -Force"
+                },
+    "packageManager":  "pnpm@9.0.0"
+}
