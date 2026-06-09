@@ -48,6 +48,26 @@ export class BranchesRepository {
     return this.mapRow(result.rows[0]);
   }
 
+  async delete(businessId: string, id: string): Promise<boolean> {
+    const client = await this.databaseService.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM services WHERE business_id = $1 AND branch_id = $2', [businessId, id]);
+      const result = await client.query('DELETE FROM branches WHERE business_id = $1 AND id = $2', [businessId, id]);
+      await client.query('COMMIT');
+      return (result.rowCount ?? 0) > 0;
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // Keep the original database error visible to the service layer.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async update(businessId: string, id: string, data: UpdateBranchDto): Promise<Branch | null> {
     const fieldMap: Record<string, string> = {
       name: 'name',

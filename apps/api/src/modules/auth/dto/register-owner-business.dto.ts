@@ -1,4 +1,4 @@
-﻿import { IsEmail, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min, MinLength, ValidateIf } from 'class-validator';
+import { IsEmail, IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength, ValidateIf } from 'class-validator';
 import { BusinessType } from '../../businesses/interfaces/business.interface';
 
 const businessTypes: BusinessType[] = [
@@ -36,9 +36,6 @@ export class RegisterOwnerBusinessDto {
   @MinLength(2)
   businessName!: string;
 
-  @IsString()
-  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, { message: 'slug must use lowercase letters, numbers, and hyphens' })
-  slug!: string;
 
   @IsIn(businessTypes)
   businessType!: BusinessType;

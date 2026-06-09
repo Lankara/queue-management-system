@@ -1,8 +1,10 @@
-﻿import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { PoolClient } from 'pg';
 import { mapDatabaseError } from '../../common/utils/database-error.util';
 import { comparePassword, hashPassword } from '../../common/utils/password.util';
+import { createSlugBase, createSlugCandidate } from '../../common/utils/slug.util';
 import { env } from '../../config/env';
 import { DatabaseService } from '../../database/database.service';
 import { BusinessType } from '../businesses/interfaces/business.interface';
@@ -77,13 +79,14 @@ export class AuthService {
       );
       const userRow = userResult.rows[0];
 
+      const slug = await this.generateUniqueSlug(client, data.businessName);
       const businessResult = await client.query<{ id: string }>(
         `INSERT INTO businesses (name, slug, business_type, default_language, timezone, phone, email, address, is_active)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
          RETURNING id`,
         [
           data.businessName,
-          data.slug,
+          slug,
           data.businessType,
           data.defaultLanguage ?? data.preferredLanguage ?? 'en',
           data.timezone ?? 'Asia/Colombo',
@@ -169,6 +172,22 @@ export class AuthService {
       user,
       businesses
     };
+  }
+
+  private async generateUniqueSlug(client: PoolClient, businessName: string): Promise<string> {
+    const base = createSlugBase(businessName);
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const suffix = randomBytes(2).toString('hex');
+      const candidate = createSlugCandidate(base, suffix);
+      const existing = await client.query<{ exists: number }>('SELECT 1 AS exists FROM businesses WHERE slug = $1 LIMIT 1', [candidate]);
+
+      if (existing.rowCount === 0) {
+        return candidate;
+      }
+    }
+
+    throw new Error('Could not generate a unique business slug');
   }
 
   private getDefaultProfileMode(businessType: BusinessType): 'BASIC' | 'MEDICAL' {

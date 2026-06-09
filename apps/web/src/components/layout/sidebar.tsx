@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import {
   BarChart3,
@@ -6,13 +6,11 @@ import {
   Building2,
   CalendarClock,
   Gauge,
-  GitBranch,
   LayoutDashboard,
   ListOrdered,
   MessageCircle,
   QrCode,
   Settings,
-  Stethoscope,
   TimerReset,
   Users
 } from 'lucide-react';
@@ -21,8 +19,6 @@ import { SidebarNavItem } from './sidebar-nav-item';
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/businesses', label: 'Businesses', icon: Building2 },
-  { href: '/dashboard/branches', label: 'Branches', icon: GitBranch },
-  { href: '/dashboard/services', label: 'Services', icon: Stethoscope },
   { href: '/dashboard/customers', label: 'Customers', icon: Users },
   { href: '/dashboard/queues', label: 'Queues', icon: ListOrdered },
   { href: '/dashboard/qr', label: 'QR Codes', icon: QrCode },

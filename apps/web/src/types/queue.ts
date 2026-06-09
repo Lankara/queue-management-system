@@ -54,4 +54,5 @@ export interface QueuePosition {
   currentServingNumber: string | null;
   position: number;
   estimatedWaitingCount: number;
+  totalQueueCount: number;
 }

@@ -2,6 +2,7 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
+import { useMemo } from 'react';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,17 +41,19 @@ export function AppointmentForm({
   isSubmitting?: boolean;
   onSubmit: (values: AppointmentFormValues) => void;
 }) {
-  const { register, handleSubmit, formState: { errors } } = useForm<AppointmentFormValues>({
+  const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<AppointmentFormValues>({
     resolver: zodResolver(schema),
     defaultValues: { branchId: '', serviceId: '', requestedStartTime: '', requestedEndTime: '' }
   });
+  const selectedBranchId = watch('branchId');
+  const filteredServices = useMemo(() => selectedBranchId ? services.filter((service) => service.branchId === selectedBranchId) : services, [selectedBranchId, services]);
 
   return (
     <form className="grid gap-5" onSubmit={handleSubmit(onSubmit)}>
       <CustomerLookup businessId={businessId} selectedCustomer={selectedCustomer} selectedProfile={selectedProfile} onCustomerSelect={onCustomerSelect} onProfileSelect={onProfileSelect} />
       <div className="grid gap-4 md:grid-cols-2">
-        <Select label="Branch" placeholder="No branch" options={branches.map((branch) => ({ label: branch.name, value: branch.id }))} error={errors.branchId?.message} {...register('branchId')} />
-        <Select label="Service" placeholder="Select service" options={services.map((service) => ({ label: service.name, value: service.id }))} error={errors.serviceId?.message} {...register('serviceId')} />
+        <Select label="Branch" placeholder="Select branch" options={branches.map((branch) => ({ label: branch.name, value: branch.id }))} error={errors.branchId?.message} {...register('branchId', { onChange: () => setValue('serviceId', '') })} />
+        <Select label="Service" placeholder={selectedBranchId ? 'Select service' : 'Select branch first'} options={filteredServices.map((service) => ({ label: service.name, value: service.id }))} error={errors.serviceId?.message} disabled={!selectedBranchId} {...register('serviceId')} />
         <Input label="Requested start" type="datetime-local" error={errors.requestedStartTime?.message} {...register('requestedStartTime')} />
         <Input label="Requested end" type="datetime-local" error={errors.requestedEndTime?.message} {...register('requestedEndTime')} />
       </div>

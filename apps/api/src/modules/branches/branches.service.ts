@@ -29,6 +29,21 @@ export class BranchesService {
     return branch;
   }
 
+  async delete(businessId: string, id: string): Promise<{ deleted: true }> {
+    try {
+      const deleted = await this.branchesRepository.delete(businessId, id);
+      if (!deleted) {
+        throw new NotFoundException('Branch not found');
+      }
+      return { deleted: true };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw mapDatabaseError(error);
+    }
+  }
+
   async update(businessId: string, id: string, data: UpdateBranchDto): Promise<Branch> {
     try {
       const branch = await this.branchesRepository.update(businessId, id, data);

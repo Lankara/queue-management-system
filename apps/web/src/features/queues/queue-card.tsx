@@ -25,7 +25,7 @@ export function QueueCard({
 }) {
   const branch = branches.find((item) => item.id === queue.branchId);
   const service = services.find((item) => item.id === queue.serviceId);
-  const total = entries?.length ?? queue.lastIssuedNumber + 1;
+  const total = entries?.length ?? Math.max(queue.lastIssuedNumber, 0);
   const active = entries?.filter((entry) => activeStatuses.includes(entry.status)).length ?? 0;
   const waiting = entries?.filter((entry) => ['CONFIRMED', 'WAITING'].includes(entry.status)).length ?? 0;
 

@@ -29,6 +29,21 @@ export class ServicesService {
     return service;
   }
 
+  async delete(businessId: string, id: string): Promise<{ deleted: true }> {
+    try {
+      const deleted = await this.servicesRepository.delete(businessId, id);
+      if (!deleted) {
+        throw new NotFoundException('Service not found');
+      }
+      return { deleted: true };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw mapDatabaseError(error);
+    }
+  }
+
   async update(businessId: string, id: string, data: UpdateServiceDto): Promise<BusinessServiceItem> {
     try {
       const service = await this.servicesRepository.update(businessId, id, data);

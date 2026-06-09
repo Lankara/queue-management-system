@@ -1,4 +1,4 @@
-﻿import { publicGet, publicPatch, publicPost } from '@/lib/public-api-client';
+import { publicGet, publicPatch, publicPost } from '@/lib/public-api-client';
 import { LanguageCode } from '@/types/business-setup';
 import { GenderCode } from '@/types/customer-profile';
 import { PublicBusiness, PublicClientProfile, PublicCustomer } from '@/types/public-queue';
@@ -43,6 +43,12 @@ export function rejectPublicQueueEntry(businessSlug: string, entryId: string): P
   return publicPatch<QueueEntry, { reason?: string }>(`/public/businesses/${encodeURIComponent(businessSlug)}/queue-entries/${entryId}/reject`, {});
 }
 
-export function getPublicQueuePosition(businessSlug: string, entryId: string): Promise<QueuePosition> {
-  return publicGet<QueuePosition>(`/public/businesses/${encodeURIComponent(businessSlug)}/queue-entries/${entryId}/position`);
+export function getPublicQueuePosition(
+  businessSlug: string,
+  entryId: string,
+  options: { logNotification?: boolean } = {}
+): Promise<QueuePosition> {
+  const params = new URLSearchParams({ _: String(Date.now()) });
+  if (options.logNotification) params.set('logNotification', 'true');
+  return publicGet<QueuePosition>(`/public/businesses/${encodeURIComponent(businessSlug)}/queue-entries/${entryId}/position?${params.toString()}`);
 }

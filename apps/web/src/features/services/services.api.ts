@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from '@/lib/api-client';
+import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api-client';
 import { Service } from '@/types/business-setup';
 
 export interface ServicePayload {
@@ -21,4 +21,8 @@ export function createService(businessId: string, data: ServicePayload): Promise
 
 export function updateService(businessId: string, id: string, data: Partial<ServicePayload>): Promise<Service> {
   return apiPatch<Service, Partial<ServicePayload>>(`/businesses/${businessId}/services/${id}`, data);
+}
+
+export function deleteService(businessId: string, id: string): Promise<{ deleted: true }> {
+  return apiDelete<{ deleted: true }>(`/businesses/${businessId}/services/${id}`);
 }

@@ -14,7 +14,7 @@ import { businessTypeOptions, languageOptions } from './business-options';
 
 const schema = z.object({
   name: z.string().min(1, 'Name is required'),
-  slug: z.string().min(1, 'Slug is required'),
+
   businessType: z.enum(['MEDICAL_CENTER', 'DOCTOR', 'CLINIC', 'HOSPITAL', 'BARBER_SHOP', 'BEAUTY_PARLOUR', 'SALON', 'SERVICE_SHOP', 'OTHER']),
   defaultLanguage: z.enum(['en', 'si']),
   timezone: z.string().min(1),
@@ -31,7 +31,7 @@ export function BusinessForm({ business, isSubmitting, onSubmit }: { business?: 
     resolver: zodResolver(schema),
     defaultValues: {
       name: '',
-      slug: '',
+
       businessType: 'MEDICAL_CENTER',
       defaultLanguage: 'en',
       timezone: 'Asia/Colombo',
@@ -46,7 +46,7 @@ export function BusinessForm({ business, isSubmitting, onSubmit }: { business?: 
     if (business) {
       reset({
         name: business.name,
-        slug: business.slug,
+
         businessType: business.businessType,
         defaultLanguage: business.defaultLanguage,
         timezone: business.timezone,
@@ -62,7 +62,7 @@ export function BusinessForm({ business, isSubmitting, onSubmit }: { business?: 
     <form className="grid gap-4" onSubmit={handleSubmit(onSubmit)}>
       <div className="grid gap-4 md:grid-cols-2">
         <Input label="Business name" error={errors.name?.message} {...register('name')} />
-        <Input label="Slug" error={errors.slug?.message} {...register('slug')} />
+
         <Select label="Business type" options={businessTypeOptions} error={errors.businessType?.message} {...register('businessType')} />
         <Select label="Default language" options={languageOptions} error={errors.defaultLanguage?.message} {...register('defaultLanguage')} />
         <Input label="Timezone" error={errors.timezone?.message} {...register('timezone')} />

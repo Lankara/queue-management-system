@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { PoolClient } from 'pg';
 import { DatabaseService } from '../../database/database.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
+import { createSlugBase, createSlugCandidate } from '../../common/utils/slug.util';
 import { Business, BusinessType } from './interfaces/business.interface';
 
 interface BusinessRow {
@@ -31,13 +33,14 @@ export class BusinessesRepository {
 
     try {
       await client.query('BEGIN');
+      const slug = await this.generateUniqueSlug(client, data.name);
       const result = await client.query<BusinessRow>(
         `INSERT INTO businesses (name, slug, business_type, default_language, timezone, phone, email, address, is_active)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING ${BUSINESS_COLUMNS}`,
         [
           data.name,
-          data.slug,
+          slug,
           data.businessType,
           data.defaultLanguage ?? 'en',
           data.timezone ?? 'Asia/Colombo',
@@ -83,7 +86,6 @@ export class BusinessesRepository {
   async update(id: string, data: UpdateBusinessDto): Promise<Business | null> {
     const fieldMap: Record<keyof UpdateBusinessDto, string> = {
       name: 'name',
-      slug: 'slug',
       businessType: 'business_type',
       defaultLanguage: 'default_language',
       timezone: 'timezone',
@@ -113,6 +115,22 @@ export class BusinessesRepository {
     );
 
     return this.mapRow(result.rows[0]);
+  }
+
+  private async generateUniqueSlug(client: PoolClient, businessName: string): Promise<string> {
+    const base = createSlugBase(businessName);
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const suffix = randomBytes(2).toString('hex');
+      const candidate = createSlugCandidate(base, suffix);
+      const existing = await client.query<{ exists: number }>('SELECT 1 AS exists FROM businesses WHERE slug = $1 LIMIT 1', [candidate]);
+
+      if (existing.rowCount === 0) {
+        return candidate;
+      }
+    }
+
+    throw new Error('Could not generate a unique business slug');
   }
 
   private mapRow(row?: BusinessRow): Business | null {

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect } from 'react';
@@ -24,16 +24,16 @@ const schema = z.object({
 export type ServiceFormValues = z.output<typeof schema>;
 type ServiceFormInputValues = z.input<typeof schema>;
 
-export function ServiceForm({ service, branches, isSubmitting, onSubmit }: { service?: Service | null; branches: Branch[]; isSubmitting?: boolean; onSubmit: (values: ServiceFormValues) => void }) {
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<ServiceFormInputValues, unknown, ServiceFormValues>({
+export function ServiceForm({ service, branches, lockedBranch, businessName, isSubmitting, onSubmit }: { service?: Service | null; branches: Branch[]; lockedBranch?: Branch | null; businessName?: string; isSubmitting?: boolean; onSubmit: (values: ServiceFormValues) => void }) {
+  const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm<ServiceFormInputValues, unknown, ServiceFormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { branchId: '', name: '', code: '', description: '', durationMinutes: 15, requiresApproval: true, isActive: true }
+    defaultValues: { branchId: lockedBranch?.id ?? '', name: '', code: '', description: '', durationMinutes: 15, requiresApproval: true, isActive: true }
   });
 
   useEffect(() => {
     if (service) {
       reset({
-        branchId: service.branchId ?? '',
+        branchId: service.branchId ?? lockedBranch?.id ?? '',
         name: service.name,
         code: service.code,
         description: service.description ?? '',
@@ -41,13 +41,24 @@ export function ServiceForm({ service, branches, isSubmitting, onSubmit }: { ser
         requiresApproval: service.requiresApproval,
         isActive: service.isActive
       });
+      return;
     }
-  }, [service, reset]);
+    if (lockedBranch) {
+      setValue('branchId', lockedBranch.id);
+    }
+  }, [lockedBranch, service, reset, setValue]);
 
   return (
-    <form className="grid gap-4" onSubmit={handleSubmit((values) => onSubmit({ ...values, branchId: values.branchId || undefined }))}>
+    <form className="grid gap-4" onSubmit={handleSubmit((values) => onSubmit({ ...values, branchId: lockedBranch?.id ?? (values.branchId || undefined) }))}>
+      {lockedBranch ? (
+        <div className="grid gap-2 rounded-md border border-teal-200 bg-teal-50 p-3 text-sm text-teal-950">
+          <div><span className="font-semibold">Business:</span> {businessName ?? 'Selected business'}</div>
+          <div><span className="font-semibold">Branch:</span> {lockedBranch.name}</div>
+          <input type="hidden" {...register('branchId')} value={lockedBranch.id} />
+        </div>
+      ) : null}
       <div className="grid gap-4 md:grid-cols-2">
-        <Select label="Branch" placeholder="No branch" options={branches.map((branch) => ({ label: branch.name, value: branch.id }))} error={errors.branchId?.message} {...register('branchId')} />
+        {!lockedBranch ? <Select label="Branch" placeholder="No branch" options={branches.map((branch) => ({ label: branch.name, value: branch.id }))} error={errors.branchId?.message} {...register('branchId')} /> : null}
         <Input label="Service name" error={errors.name?.message} {...register('name')} />
         <Input label="Code" error={errors.code?.message} {...register('code')} />
         <Input label="Duration minutes" type="number" min={1} error={errors.durationMinutes?.message} {...register('durationMinutes')} />
@@ -61,5 +72,3 @@ export function ServiceForm({ service, branches, isSubmitting, onSubmit }: { ser
     </form>
   );
 }
-
-

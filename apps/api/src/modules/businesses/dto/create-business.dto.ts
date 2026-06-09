@@ -19,9 +19,6 @@ export class CreateBusinessDto {
   @IsString()
   name!: string;
 
-  @IsString()
-  slug!: string;
-
   @IsIn(BUSINESS_TYPES)
   businessType!: BusinessType;
 

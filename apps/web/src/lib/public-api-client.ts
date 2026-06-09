@@ -5,7 +5,7 @@ export const PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http
 
 export const publicApiClient = axios.create({
   baseURL: PUBLIC_API_BASE_URL,
-  headers: { Accept: 'application/json' }
+  headers: { Accept: 'application/json', 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
 });
 
 export async function publicGet<T>(url: string): Promise<T> {

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import Link from 'next/link';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -27,14 +27,39 @@ import {
   rejectPublicQueueEntry
 } from '@/features/public-queue/public-queue.api';
 import { usePublicQueueStore } from '@/store/public-queue-store';
-import { PublicCustomer } from '@/types/public-queue';
+import { PublicBranchSummary, PublicCustomer, PublicServiceSummary } from '@/types/public-queue';
+import { QueueEntry } from '@/types/queue';
 
 function getErrorMessage(error: unknown) {
-  return error instanceof AxiosError ? error.response?.data?.message ?? error.message : 'Request failed';
+  if (error instanceof AxiosError) {
+    const message = error.response?.data?.message;
+    if (Array.isArray(message)) return message.join(', ');
+    if (typeof message === 'string') return message;
+    return error.message;
+  }
+
+  return 'Request failed';
 }
 
 function formatQueueStatus(status: string) {
   return status.toLowerCase().replace(/_/g, ' ');
+}
+
+function isMainBranch(branch?: PublicBranchSummary) {
+  const name = branch?.name?.toLowerCase().trim();
+  const code = branch?.code?.toLowerCase().trim();
+  return name === 'main' || name === 'main branch' || code === 'main';
+}
+
+function serviceBelongsToBranch(service: PublicServiceSummary, branchId: string, branches: PublicBranchSummary[]) {
+  if (!branchId) return true;
+  if (service.branchId === branchId) return true;
+  const branch = branches.find((item) => item.id === branchId);
+  return !service.branchId && isMainBranch(branch);
+}
+
+function isTodayQueueEntry(entry: QueueEntry) {
+  return entry.serviceDate?.slice(0, 10) === new Date().toISOString().slice(0, 10);
 }
 
 export default function PublicJoinPage() {
@@ -62,7 +87,14 @@ export default function PublicJoinPage() {
   const businessQuery = useQuery({ queryKey: ['public-business', params.businessSlug], queryFn: () => getPublicBusiness(params.businessSlug) });
   const business = businessQuery.data;
 
-  useEffect(() => { if (business) setBusiness(business); }, [business, setBusiness]);
+  useEffect(() => {
+    if (!business) return;
+    setBusiness(business);
+
+    if (queueEntry && (queueEntry.businessId !== business.id || !isTodayQueueEntry(queueEntry))) {
+      setQueueEntry(null);
+    }
+  }, [business, queueEntry, setBusiness, setQueueEntry]);
 
   useEffect(() => {
     if (!business) return;
@@ -100,12 +132,21 @@ export default function PublicJoinPage() {
   }, [business, queryParams, selectedBranchId, selectedServiceId, setBranchAndService]);
 
   const profilesQuery = useQuery({ queryKey: ['public-client-profiles', params.businessSlug, customer?.id], queryFn: () => listPublicClientProfiles(params.businessSlug, customer?.id as string), enabled: Boolean(customer?.id) });
-  const queuePositionQuery = useQuery({ queryKey: ['public-queue-position-before-confirm', params.businessSlug, queueEntry?.id], queryFn: () => getPublicQueuePosition(params.businessSlug, queueEntry?.id as string), enabled: Boolean(queueEntry?.id), refetchInterval: 15000 });
+  const canUseSavedQueueEntry = Boolean(business && queueEntry && queueEntry.businessId === business.id);
+  const queuePositionQuery = useQuery({
+    queryKey: ['public-queue-position-before-confirm', params.businessSlug, queueEntry?.id],
+    queryFn: () => getPublicQueuePosition(params.businessSlug, queueEntry?.id as string),
+    enabled: canUseSavedQueueEntry && queueEntry?.status !== 'DRAFT',
+    refetchInterval: 15000
+  });
   const phoneMutation = useMutation({ mutationFn: (values: PhoneLookupValues) => findPublicCustomerByPhone(params.businessSlug, values.phone), onMutate: (values) => setPhoneForRegistration(values.phone), onSuccess: setFoundCustomer });
   const customerMutation = useMutation({ mutationFn: (values: PhoneLookupValues) => createPublicCustomer(params.businessSlug, { primaryPhone: values.phone, preferredLanguage: language }), onSuccess: setCustomer });
   const profileMutation = useMutation({ mutationFn: (values: PublicClientProfileFormValues) => createPublicClientProfile(params.businessSlug, customer?.id as string, { ...values, ageYears: values.ageYears === '' ? undefined : Number(values.ageYears) }), onSuccess: (profile) => { setClientProfile(profile); setShowNewProfile(false); } });
   const joinMutation = useMutation({ mutationFn: () => joinPublicQueueDraft(params.businessSlug, { branchId: selectedBranchId ?? undefined, serviceId: selectedServiceId as string, customerId: customer?.id as string, clientProfileId: clientProfile?.id as string, source: 'QR' }), onSuccess: setQueueEntry });
-  const confirmMutation = useMutation({ mutationFn: () => confirmPublicQueueEntry(params.businessSlug, queueEntry?.id as string), onSuccess: (entry) => { setQueueEntry(entry); router.push(`/q/${params.businessSlug}/queue/${entry.id}`); } });
+  const confirmMutation = useMutation({
+    mutationFn: () => confirmPublicQueueEntry(params.businessSlug, queueEntry?.id as string),
+    onSuccess: (entry) => { setQueueEntry(entry); router.push(`/q/${params.businessSlug}/queue/${entry.id}`); }
+  });
   const rejectMutation = useMutation({ mutationFn: () => rejectPublicQueueEntry(params.businessSlug, queueEntry?.id as string), onSuccess: () => setQueueEntry(null) });
   const queueStatus = queuePositionQuery.data?.status ?? queueEntry?.status;
 
@@ -136,9 +177,9 @@ export default function PublicJoinPage() {
       {!customer && !foundCustomer ? <Card className="grid gap-4"><h2 className="font-semibold">Enter your phone number</h2><PhoneLookupForm isLoading={phoneMutation.isPending} onSubmit={(values) => phoneMutation.mutate(values)} />{phoneMutation.isError ? <Button variant="secondary" isLoading={customerMutation.isPending} onClick={() => customerMutation.mutate({ phone: phoneForRegistration })}>Register this phone</Button> : null}</Card> : null}
       {foundCustomer && !customer ? <CustomerConfirmationCard customer={foundCustomer} onConfirm={() => setCustomer(foundCustomer)} onReject={() => setFoundCustomer(null)} /> : null}
       {customer && !clientProfile ? <Card className="grid gap-4"><h2 className="font-semibold">Who is joining?</h2>{profilesQuery.isLoading ? <LoadingState /> : <ClientProfilePicker profiles={profilesQuery.data ?? []} selectedId={undefined} onSelect={setClientProfile} onCreateNew={() => setShowNewProfile(true)} />}{showNewProfile ? <PublicClientProfileForm isLoading={profileMutation.isPending} onSubmit={(values) => profileMutation.mutate(values)} /> : null}</Card> : null}
-      {customer && clientProfile && !queueEntry ? <QueueJoinCard business={business} branchId={selectedBranchId ?? ''} serviceId={selectedServiceId ?? ''} error={joinValidationError} warning={selectionWarning} preselectedFromQr={preselectedFromQr} onBranchChange={(branchId) => { setJoinValidationError(null); setSelectionWarning(null); setPreselectedFromQr(false); setBranchAndService(branchId || null, selectedServiceId); }} onServiceChange={(serviceId) => { setJoinValidationError(null); setSelectionWarning(null); setPreselectedFromQr(false); setBranchAndService(selectedBranchId, serviceId || null); }} isLoading={joinMutation.isPending} onJoin={handleJoinQueue} /> : null}
-      {queueEntry && queueStatus === 'DRAFT' ? <Card className="grid gap-4 text-center"><p className="text-sm text-slate-600">Your draft queue number</p><p className="text-5xl font-bold text-slate-950">{queueEntry.queueNumber}</p><div className="grid grid-cols-2 gap-3"><Button isLoading={confirmMutation.isPending} onClick={() => confirmMutation.mutate()}>Confirm</Button><Button variant="secondary" isLoading={rejectMutation.isPending} onClick={() => rejectMutation.mutate()}>Reject</Button></div></Card> : null}
-      {queueEntry && queueStatus && queueStatus !== 'DRAFT' ? <Card className="grid gap-4 text-center"><p className="text-sm text-slate-600">This queue entry is already {formatQueueStatus(queueStatus)}.</p><p className="text-5xl font-bold text-slate-950">{queueEntry.queueNumber}</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Button onClick={() => router.push(`/q/${params.businessSlug}/queue/${queueEntry.id}`)}>View status</Button><Button variant="secondary" onClick={() => setQueueEntry(null)}>Start new queue</Button></div></Card> : null}
+      {customer && clientProfile && !queueEntry ? <QueueJoinCard business={business} branchId={selectedBranchId ?? ''} serviceId={selectedServiceId ?? ''} error={joinValidationError} warning={selectionWarning} preselectedFromQr={preselectedFromQr} onBranchChange={(nextBranchId) => { setJoinValidationError(null); setSelectionWarning(null); setPreselectedFromQr(false); const selectedService = business.services.find((service) => service.id === selectedServiceId); const nextServiceId = nextBranchId && selectedService && !serviceBelongsToBranch(selectedService, nextBranchId, business.branches) ? null : selectedServiceId; setBranchAndService(nextBranchId || null, nextServiceId); }} onServiceChange={(nextServiceId) => { setJoinValidationError(null); setSelectionWarning(null); setPreselectedFromQr(false); const selectedService = business.services.find((service) => service.id === nextServiceId); setBranchAndService(selectedService?.branchId ?? selectedBranchId, nextServiceId || null); }} isLoading={joinMutation.isPending} onJoin={handleJoinQueue} /> : null}
+      {canUseSavedQueueEntry && queueEntry && queueStatus === 'DRAFT' ? <Card className="grid gap-4 text-center"><p className="text-sm text-slate-600">Your queue request number</p><p className="text-5xl font-bold text-slate-950">{queueEntry.queueNumber}</p><div className="grid grid-cols-2 gap-3"><Button isLoading={confirmMutation.isPending} onClick={() => confirmMutation.mutate()}>Send request</Button><Button variant="secondary" isLoading={rejectMutation.isPending} onClick={() => rejectMutation.mutate()}>Reject</Button></div><Button variant="ghost" onClick={() => setQueueEntry(null)}>Start a new request</Button></Card> : null}
+      {canUseSavedQueueEntry && queueEntry && queueStatus && queueStatus !== 'DRAFT' ? <Card className="grid gap-4 text-center"><p className="text-sm text-slate-600">This queue entry is already {formatQueueStatus(queueStatus)}.</p><p className="text-5xl font-bold text-slate-950">{queueEntry.queueNumber}</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Button onClick={() => router.push(`/q/${params.businessSlug}/queue/${queueEntry.id}`)}>View status</Button><Button variant="secondary" onClick={() => setQueueEntry(null)}>Start new queue</Button></div></Card> : null}
       <Link className="text-center text-sm text-slate-500" href={`/q/${business.slug}`}>Back to language selection</Link>
     </PublicLayout>
   );

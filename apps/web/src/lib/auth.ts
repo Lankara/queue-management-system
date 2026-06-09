@@ -1,4 +1,4 @@
-﻿import { apiPost } from './api-client';
+import { apiPost } from './api-client';
 import { LoginResponse } from '@/types/auth';
 import { BusinessType, LanguageCode } from '@/types/business-setup';
 
@@ -14,7 +14,6 @@ export interface OwnerBusinessRegistrationPayload {
   password: string;
   preferredLanguage: LanguageCode;
   businessName: string;
-  slug: string;
   businessType: BusinessType;
   defaultLanguage?: LanguageCode;
   timezone?: string;

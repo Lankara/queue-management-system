@@ -47,7 +47,7 @@ const ENTRY_COLUMNS = `id, business_id, queue_id, branch_id, service_id, custome
 
 export interface ConfirmEntryResult {
   entry: QueueEntry | null;
-  failure?: 'BANNED' | 'INVALID_STATUS';
+  failure?: 'BANNED' | 'INVALID_STATUS' | 'QUEUE_CLOSED';
   currentStatus?: QueueStatus;
 }
 
@@ -73,24 +73,29 @@ export interface QueueNotificationContext {
 export class QueuesRepository {
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async createDraftEntry(businessId: string, data: CreateQueueJoinDto, queueCode: string): Promise<QueueEntry> {
+  async createDraftEntry(businessId: string, data: CreateQueueJoinDto, queueCode: string): Promise<QueueEntry | null> {
     const client = await this.databaseService.getPool().connect();
 
     try {
       await client.query('BEGIN');
       const serviceDate = await this.getCurrentDate(client);
       const queueNumberLength = await this.getQueueNumberLength(client, businessId);
-      const queue = await this.getOrCreateQueue(client, businessId, data.branchId ?? null, data.serviceId ?? null, serviceDate, queueCode);
-      const nextSequence = queue.lastIssuedNumber + 1;
+      const queue = await this.findOpenQueueForJoin(client, businessId, data.branchId ?? null, data.serviceId ?? null, serviceDate, queueCode);
+      if (!queue) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const nextSequence = Math.max(queue.lastIssuedNumber + 1, 1);
       const queueNumber = formatQueueNumber(nextSequence, queueNumberLength);
 
       await client.query(`UPDATE queues SET last_issued_number = $2, updated_at = now() WHERE id = $1`, [queue.id, nextSequence]);
 
+      const initialStatus: QueueStatus = data.source === 'OPERATOR' ? 'CONFIRMED' : 'DRAFT';
       const result = await client.query<QueueEntryRow>(
-        `INSERT INTO queue_entries (business_id, queue_id, branch_id, service_id, customer_id, client_profile_id, queue_number, queue_sequence, status, source, service_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'DRAFT', $9, $10)
+        `INSERT INTO queue_entries (business_id, queue_id, branch_id, service_id, customer_id, client_profile_id, queue_number, queue_sequence, status, source, service_date, confirmed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::queue_status_enum, $10::queue_source_enum, $11, CASE WHEN $9 = 'CONFIRMED' THEN now() ELSE NULL END)
          RETURNING ${ENTRY_COLUMNS}`,
-        [businessId, queue.id, data.branchId ?? null, data.serviceId ?? null, data.customerId, data.clientProfileId, queueNumber, nextSequence, data.source, serviceDate]
+        [businessId, queue.id, data.branchId ?? null, data.serviceId ?? null, data.customerId, data.clientProfileId, queueNumber, nextSequence, initialStatus, data.source, serviceDate]
       );
 
       await client.query('COMMIT');
@@ -122,6 +127,15 @@ export class QueuesRepository {
       if (entry.status !== 'DRAFT') {
         await client.query('ROLLBACK');
         return { entry, failure: 'INVALID_STATUS', currentStatus: entry.status };
+      }
+
+      const queueResult = await client.query<{ is_active: boolean }>(
+        `SELECT is_active FROM queues WHERE business_id = $1 AND id = $2 FOR UPDATE`,
+        [businessId, entry.queueId]
+      );
+      if (queueResult.rows[0]?.is_active !== true) {
+        await client.query('ROLLBACK');
+        return { entry, failure: 'QUEUE_CLOSED' };
       }
 
       const customerResult = await client.query<{ is_online_booking_banned: boolean }>(
@@ -165,6 +179,10 @@ export class QueuesRepository {
     return this.mapEntryRow(result.rows[0]);
   }
 
+
+  async findEntryByIdForBusiness(businessId: string, entryId: string): Promise<QueueEntry | null> {
+    return this.findEntryById(businessId, entryId);
+  }
   async getPosition(businessId: string, entryId: string): Promise<QueuePosition | null> {
     const entry = await this.findEntryById(businessId, entryId);
     if (!entry) {
@@ -176,6 +194,12 @@ export class QueuesRepository {
       [businessId, entry.queueId]
     );
     const activeStatuses = ['CONFIRMED', 'WAITING', 'CALLED', 'IN_SERVICE'];
+    const totalResult = await this.databaseService.query<{ total_count: string }>(
+      'SELECT COUNT(*) AS total_count FROM queue_entries WHERE business_id = $1 AND queue_id = $2 AND service_date = $3 AND status NOT IN ($4, $5)',
+      [businessId, entry.queueId, entry.serviceDate, 'CANCELLED', 'NO_SHOW']
+    );
+    const totalQueueCount = Number(totalResult.rows[0]?.total_count ?? 0);
+
 
     if (!activeStatuses.includes(entry.status)) {
       return {
@@ -183,7 +207,8 @@ export class QueuesRepository {
         status: entry.status,
         currentServingNumber: queueResult.rows[0]?.current_number ?? null,
         position: 0,
-        estimatedWaitingCount: 0
+        estimatedWaitingCount: 0,
+        totalQueueCount
       };
     }
 
@@ -204,10 +229,104 @@ export class QueuesRepository {
       status: entry.status,
       currentServingNumber: queueResult.rows[0]?.current_number ?? null,
       position: estimatedWaitingCount + 1,
-      estimatedWaitingCount
+      estimatedWaitingCount,
+      totalQueueCount
     };
   }
 
+  async openQueue(businessId: string, branchId: string | null, serviceId: string | null, queueCode: string): Promise<Queue> {
+    const client = await this.databaseService.getPool().connect();
+
+    try {
+      await client.query('BEGIN');
+      const queueDate = await this.getCurrentDate(client);
+      const existing = await client.query<QueueRow>(
+        `SELECT ${QUEUE_COLUMNS}
+         FROM queues
+         WHERE business_id = $1 AND code = $2 AND queue_date = $3
+         FOR UPDATE`,
+        [businessId, queueCode, queueDate]
+      );
+      const existingQueue = this.mapQueueRow(existing.rows[0]);
+
+      if (existingQueue) {
+        const updated = await client.query<QueueRow>(
+          `UPDATE queues SET is_active = true, updated_at = now() WHERE business_id = $1 AND id = $2 RETURNING ${QUEUE_COLUMNS}`,
+          [businessId, existingQueue.id]
+        );
+        await client.query('COMMIT');
+        return this.mapQueueRow(updated.rows[0]) as Queue;
+      }
+
+      const created = await client.query<QueueRow>(
+        `INSERT INTO queues (business_id, branch_id, service_id, queue_date, code, is_active)
+         VALUES ($1, $2, $3, $4, $5, true)
+         RETURNING ${QUEUE_COLUMNS}`,
+        [businessId, branchId, serviceId, queueDate, queueCode]
+      );
+      await client.query('COMMIT');
+      return this.mapQueueRow(created.rows[0]) as Queue;
+    } catch (error) {
+      await this.safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async closeQueue(businessId: string, queueId: string): Promise<Queue | null> {
+    const result = await this.databaseService.query<QueueRow>(
+      `UPDATE queues SET is_active = false, updated_at = now() WHERE business_id = $1 AND id = $2 RETURNING ${QUEUE_COLUMNS}`,
+      [businessId, queueId]
+    );
+    return this.mapQueueRow(result.rows[0]);
+  }
+
+  async findOpenActiveQueues(businessId: string, branchId?: string, serviceId?: string): Promise<Queue[]> {
+    const params: unknown[] = [businessId];
+    const filters = [`business_id = $1`, `queue_date = CURRENT_DATE`, `is_active = true`];
+
+    if (branchId) {
+      params.push(branchId);
+      filters.push(`branch_id = $${params.length}`);
+    }
+
+    if (serviceId) {
+      params.push(serviceId);
+      filters.push(`service_id = $${params.length}`);
+    }
+
+    const result = await this.databaseService.query<QueueRow>(
+      `SELECT ${QUEUE_COLUMNS} FROM queues WHERE ${filters.join(' AND ')} ORDER BY created_at DESC`,
+      params
+    );
+    return result.rows.map((row) => this.mapQueueRow(row) as Queue);
+  }
+
+  async findPendingRequests(businessId: string, branchId?: string, serviceId?: string): Promise<QueueEntry[]> {
+    const params: unknown[] = [businessId];
+    const filters = [`qe.business_id = $1`, `qe.service_date = CURRENT_DATE`, `qe.status = 'DRAFT'`, `qe.source IN ('QR', 'WEB', 'MOBILE_APP', 'WHATSAPP')`];
+
+    if (branchId) {
+      params.push(branchId);
+      filters.push(`qe.branch_id = $${params.length}`);
+    }
+
+    if (serviceId) {
+      params.push(serviceId);
+      filters.push(`qe.service_id = $${params.length}`);
+    }
+
+    const result = await this.databaseService.query<QueueEntryRow>(
+      `SELECT qe.id, qe.business_id, qe.queue_id, qe.branch_id, qe.service_id, qe.customer_id, qe.client_profile_id, qe.queue_number, qe.queue_sequence, qe.status, qe.source, qe.service_date, qe.confirmed_at, qe.called_at, qe.started_at, qe.completed_at, qe.cancelled_at, qe.no_show_marked_at, qe.created_at, qe.updated_at
+       FROM queue_entries qe
+       JOIN queues q ON q.id = qe.queue_id AND q.business_id = qe.business_id
+       WHERE ${filters.join(' AND ')}
+       ORDER BY qe.created_at ASC`,
+      params
+    );
+    return result.rows.map((row) => this.mapEntryRow(row) as QueueEntry);
+  }
   async findTodayQueues(businessId: string, branchId?: string, serviceId?: string): Promise<Queue[]> {
     const params: unknown[] = [businessId];
     const filters = [`business_id = $1`, `queue_date = CURRENT_DATE`];
@@ -234,7 +353,15 @@ export class QueuesRepository {
       `SELECT ${ENTRY_COLUMNS}
        FROM queue_entries
        WHERE business_id = $1 AND queue_id = $2
-       ORDER BY queue_sequence ASC`,
+       ORDER BY
+         CASE
+           WHEN status IN ('CALLED', 'IN_SERVICE') THEN 1
+           WHEN status IN ('CONFIRMED', 'WAITING') THEN 2
+           WHEN status = 'DRAFT' THEN 3
+           ELSE 4
+         END ASC,
+         CASE WHEN source = 'OPERATOR' THEN 1 WHEN source = 'HARDWARE' THEN 2 ELSE 3 END ASC,
+         queue_sequence ASC`,
       [businessId, queueId]
     );
     return result.rows.map((row) => this.mapEntryRow(row) as QueueEntry);
@@ -245,12 +372,18 @@ export class QueuesRepository {
 
     try {
       await client.query('BEGIN');
-      await client.query(`SELECT id FROM queues WHERE business_id = $1 AND id = $2 FOR UPDATE`, [businessId, queueId]);
+      const queueLock = await client.query<{ is_active: boolean }>(`SELECT is_active FROM queues WHERE business_id = $1 AND id = $2 FOR UPDATE`, [businessId, queueId]);
+      if (queueLock.rows[0]?.is_active !== true) {
+        await client.query('ROLLBACK');
+        return null;
+      }
       const entryResult = await client.query<QueueEntryRow>(
         `SELECT ${ENTRY_COLUMNS}
          FROM queue_entries
          WHERE business_id = $1 AND queue_id = $2 AND status IN ('CONFIRMED', 'WAITING')
-         ORDER BY queue_sequence ASC
+         ORDER BY
+           CASE WHEN source = 'OPERATOR' THEN 1 WHEN source = 'HARDWARE' THEN 2 ELSE 3 END ASC,
+           queue_sequence ASC
          LIMIT 1
          FOR UPDATE`,
         [businessId, queueId]
@@ -284,6 +417,20 @@ export class QueuesRepository {
     } finally {
       client.release();
     }
+  }
+
+  async findNextCallableEntry(businessId: string, queueId: string): Promise<QueueEntry | null> {
+    const result = await this.databaseService.query<QueueEntryRow>(
+      `SELECT ${ENTRY_COLUMNS}
+       FROM queue_entries
+       WHERE business_id = $1 AND queue_id = $2 AND status IN ('CONFIRMED', 'WAITING')
+       ORDER BY
+         CASE WHEN source = 'OPERATOR' THEN 1 WHEN source = 'HARDWARE' THEN 2 ELSE 3 END ASC,
+         queue_sequence ASC
+       LIMIT 1`,
+      [businessId, queueId]
+    );
+    return this.mapEntryRow(result.rows[0]);
   }
 
   async updateEntryStatus(businessId: string, entryId: string, status: 'IN_SERVICE' | 'COMPLETED'): Promise<QueueEntry | null> {
@@ -424,36 +571,28 @@ export class QueuesRepository {
     return result.rows[0]?.queue_number_length ?? 3;
   }
 
-  private async getOrCreateQueue(
+  private async findOpenQueueForJoin(
     client: PoolClient,
     businessId: string,
     branchId: string | null,
     serviceId: string | null,
     queueDate: string,
     queueCode: string
-  ): Promise<Queue> {
+  ): Promise<Queue | null> {
     const existing = await client.query<QueueRow>(
       `SELECT ${QUEUE_COLUMNS}
        FROM queues
-       WHERE business_id = $1 AND code = $2 AND queue_date = $3
+       WHERE business_id = $1
+         AND code = $2
+         AND queue_date = $3
+         AND is_active = true
+         AND ($4::uuid IS NULL OR branch_id = $4::uuid)
+         AND ($5::uuid IS NULL OR service_id = $5::uuid)
        FOR UPDATE`,
-      [businessId, queueCode, queueDate]
+      [businessId, queueCode, queueDate, branchId, serviceId]
     );
-    const existingQueue = this.mapQueueRow(existing.rows[0]);
-
-    if (existingQueue) {
-      return existingQueue;
-    }
-
-    const created = await client.query<QueueRow>(
-      `INSERT INTO queues (business_id, branch_id, service_id, queue_date, code)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING ${QUEUE_COLUMNS}`,
-      [businessId, branchId, serviceId, queueDate, queueCode]
-    );
-    return this.mapQueueRow(created.rows[0]) as Queue;
+    return this.mapQueueRow(existing.rows[0]);
   }
-
   private async findEntryById(businessId: string, entryId: string): Promise<QueueEntry | null> {
     const result = await this.databaseService.query<QueueEntryRow>(
       `SELECT ${ENTRY_COLUMNS} FROM queue_entries WHERE business_id = $1 AND id = $2 LIMIT 1`,

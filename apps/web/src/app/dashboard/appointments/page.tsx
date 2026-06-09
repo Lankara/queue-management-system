@@ -20,7 +20,6 @@ import { QueueAssignmentCard } from '@/features/appointments/queue-assignment-ca
 import { ApprovalForm, ApprovalFormValues } from '@/features/appointments/approval-form';
 import { RescheduleForm, RescheduleFormValues } from '@/features/appointments/reschedule-form';
 import { acceptReschedule, approveAppointment, cancelAppointmentByOperator, getAppointment, listAppointments, listAppointmentTimeChanges, proposeReschedule, rejectAppointment, rejectReschedule, requestAppointment } from '@/features/appointments/appointments.api';
-import { BusinessSelector } from '@/features/businesses/business-selector';
 import { listBranches } from '@/features/branches/branches.api';
 import { listClientProfiles } from '@/features/client-profiles/client-profiles.api';
 import { listCustomers } from '@/features/customers/customers.api';
@@ -28,6 +27,7 @@ import { listServices } from '@/features/services/services.api';
 import { useAuthStore } from '@/store/auth-store';
 import { useBusinessStore } from '@/store/business-store';
 import { Appointment, AppointmentStatus } from '@/types/appointment';
+import { Branch, Service } from '@/types/business-setup';
 import { ClientProfile, Customer } from '@/types/customer-profile';
 
 function getErrorMessage(error: unknown) {
@@ -42,6 +42,50 @@ function formatDateTime(value?: string | null) {
   return value ? new Date(value).toLocaleString() : 'Not set';
 }
 
+function AppointmentSummaryTile({ title, code, total, pending, approved, selected, tone, onClick }: { title: string; code?: string; total: number; pending: number; approved: number; selected: boolean; tone: 'branch' | 'service'; onClick: () => void }) {
+  const selectedClass = tone === 'branch' ? 'border-teal-300 bg-teal-50' : 'border-sky-300 bg-sky-50';
+
+  return (
+    <button type="button" onClick={onClick} className={`rounded-md border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${selected ? selectedClass : 'border-slate-200 bg-white'}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-slate-950">{title}</p>
+          {code ? <p className="text-xs text-slate-500">{code}</p> : null}
+        </div>
+        <Badge tone={tone === 'branch' ? 'teal' : 'slate'}>{total}</Badge>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <span className="rounded bg-amber-50 px-2 py-1 font-medium text-amber-800">Pending {pending}</span>
+        <span className="rounded bg-emerald-50 px-2 py-1 font-medium text-emerald-800">Approved {approved}</span>
+      </div>
+    </button>
+  );
+}
+
+function buildBranchSummary(branches: Branch[], appointments: Appointment[]) {
+  return branches.map((branch) => {
+    const branchAppointments = appointments.filter((appointment) => appointment.branchId === branch.id);
+    return {
+      branch,
+      total: branchAppointments.length,
+      pending: branchAppointments.filter((appointment) => appointment.status === 'PENDING_APPROVAL').length,
+      approved: branchAppointments.filter((appointment) => ['APPROVED', 'IN_QUEUE'].includes(appointment.status)).length
+    };
+  });
+}
+
+function buildServiceSummary(services: Service[], appointments: Appointment[], branchId: string) {
+  return services.map((service) => {
+    const serviceAppointments = appointments.filter((appointment) => appointment.serviceId === service.id && (!branchId || appointment.branchId === branchId));
+    return {
+      service,
+      total: serviceAppointments.length,
+      pending: serviceAppointments.filter((appointment) => appointment.status === 'PENDING_APPROVAL').length,
+      approved: serviceAppointments.filter((appointment) => ['APPROVED', 'IN_QUEUE'].includes(appointment.status)).length
+    };
+  });
+}
+
 export default function AppointmentsPage() {
   const queryClient = useQueryClient();
   const businessId = useBusinessStore((state) => state.selectedBusinessId);
@@ -50,7 +94,7 @@ export default function AppointmentsPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<ClientProfile | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [filters, setFilters] = useState<AppointmentFilterState>({ status: '', branchId: '', serviceId: '', customerId: '', from: '', to: '' });
+  const [filters, setFilters] = useState<AppointmentFilterState>({ status: '', branchId: '', serviceId: '', useCustomerId: false, customerId: '', useDateRange: false, from: '', to: '' });
 
   const branchesQuery = useQuery({ queryKey: ['branches', businessId], queryFn: () => listBranches(businessId as string), enabled: Boolean(businessId) });
   const servicesQuery = useQuery({ queryKey: ['services', businessId], queryFn: () => listServices(businessId as string), enabled: Boolean(businessId) });
@@ -59,10 +103,10 @@ export default function AppointmentsPage() {
     queryKey: ['appointments', businessId, filters],
     queryFn: () => listAppointments(businessId as string, {
       status: filters.status as AppointmentStatus || undefined,
-      customerId: filters.customerId || undefined,
+      customerId: filters.useCustomerId ? filters.customerId || undefined : undefined,
       serviceId: filters.serviceId || undefined,
-      from: filters.from || undefined,
-      to: filters.to || undefined
+      from: filters.useDateRange ? filters.from || undefined : undefined,
+      to: filters.useDateRange ? filters.to || undefined : undefined
     }),
     enabled: Boolean(businessId),
     refetchInterval: 20000
@@ -73,8 +117,11 @@ export default function AppointmentsPage() {
 
   const branches = branchesQuery.data ?? [];
   const services = servicesQuery.data ?? [];
+  const filteredServices = useMemo(() => filters.branchId ? services.filter((service) => service.branchId === filters.branchId) : services, [filters.branchId, services]);
   const customers = customersQuery.data ?? [];
   const appointments = useMemo(() => (appointmentsQuery.data ?? []).filter((appointment) => !filters.branchId || appointment.branchId === filters.branchId), [appointmentsQuery.data, filters.branchId]);
+  const branchSummary = useMemo(() => buildBranchSummary(branches, appointmentsQuery.data ?? []), [appointmentsQuery.data, branches]);
+  const serviceSummary = useMemo(() => buildServiceSummary(filteredServices, appointmentsQuery.data ?? [], filters.branchId), [appointmentsQuery.data, filteredServices, filters.branchId]);
   const currentAppointment = selectedAppointmentQuery.data ?? selectedAppointment;
   const currentCustomer = customers.find((customer) => customer.id === currentAppointment?.customerId);
   const currentProfile = selectedCustomerProfilesQuery.data?.find((profile) => profile.id === currentAppointment?.clientProfileId);
@@ -130,17 +177,34 @@ export default function AppointmentsPage() {
   });
 
   if (!businessId) {
-    return <div className="grid gap-6"><PageHeader title="Appointments" description="Manage appointment lifecycle and queue assignment." /><BusinessSelector /><EmptyState title="Select or create a business first" /></div>;
+    return <div className="grid gap-6"><PageHeader title="Appointments" description="Manage appointment lifecycle and queue assignment." /><EmptyState title="No business is selected for this login" description="Log in again or choose your business from the business selection screen." /></div>;
   }
 
   return (
     <div className="grid gap-6">
-      <PageHeader title="Appointments" description="Manage appointment requests, approvals, reschedules, and queue linkage." />
-      <BusinessSelector />
+      <PageHeader title="Appointments" description="Select a branch and service to review, approve, and manage appointments." />
       {message ? <Card className="border-emerald-200 bg-emerald-50 text-sm text-emerald-700">{message}</Card> : null}
       {[appointmentsQuery.error, requestMutation.error, actionMutation.error, rescheduleMutation.error].filter(Boolean).map((error, index) => <ErrorState key={index} message={getErrorMessage(error)} />)}
-      <SectionCard title="Filters" description="Appointment list refreshes every 20 seconds.">
-        <AppointmentFilters filters={filters} branches={branches} services={services} onChange={setFilters} />
+      <div className="grid gap-4 xl:grid-cols-2">
+        <SectionCard title="Appointments by branch" description="Today summary for each branch.">
+          <div className="grid max-h-56 gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+            {branchSummary.length === 0 ? <EmptyState title="No branches found" /> : null}
+            {branchSummary.map(({ branch, total, pending, approved }) => (
+              <AppointmentSummaryTile key={branch.id} title={branch.name} code={branch.code} total={total} pending={pending} approved={approved} selected={filters.branchId === branch.id} tone="branch" onClick={() => setFilters((current) => ({ ...current, branchId: branch.id, serviceId: '' }))} />
+            ))}
+          </div>
+        </SectionCard>
+        <SectionCard title="Appointments by service" description={filters.branchId ? 'Services for selected branch.' : 'Services across all branches.'}>
+          <div className="grid max-h-56 gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+            {serviceSummary.length === 0 ? <EmptyState title="No services found" /> : null}
+            {serviceSummary.map(({ service, total, pending, approved }) => (
+              <AppointmentSummaryTile key={service.id} title={service.name} code={service.code} total={total} pending={pending} approved={approved} selected={filters.serviceId === service.id} tone="service" onClick={() => setFilters((current) => ({ ...current, serviceId: service.id, branchId: current.branchId || service.branchId || '' }))} />
+            ))}
+          </div>
+        </SectionCard>
+      </div>
+      <SectionCard title="Filters" description="Select branch first, then service. Customer ID and date filters apply only when checked.">
+        <AppointmentFilters filters={filters} branches={branches} services={filteredServices} onChange={setFilters} />
       </SectionCard>
       <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
         <div className="grid gap-6">
@@ -208,4 +272,3 @@ export default function AppointmentsPage() {
     </div>
   );
 }
-

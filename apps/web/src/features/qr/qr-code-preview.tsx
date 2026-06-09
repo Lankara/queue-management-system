@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import QRCode from 'qrcode';
 import { Download, Printer } from 'lucide-react';
@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { LoadingState } from '@/components/ui/state';
 
-export function QrCodePreview({ value, filename }: { value: string; filename: string }) {
+export function QrCodePreview({ value, filename, compact = false }: { value: string; filename: string; compact?: boolean }) {
   const [dataUrl, setDataUrl] = useState<string>('');
 
   useEffect(() => {
@@ -31,9 +31,9 @@ export function QrCodePreview({ value, filename }: { value: string; filename: st
   }
 
   return (
-    <Card className="grid gap-4">
+    <Card className={compact ? 'grid gap-3 border-0 bg-transparent p-0 shadow-none' : 'grid gap-4'}>
       <div className="grid place-items-center rounded-md border border-slate-200 bg-white p-4">
-        {dataUrl ? <img alt="Queue QR code" className="h-64 w-64" src={dataUrl} /> : <LoadingState message="Generating QR code..." />}
+        {dataUrl ? <img alt="Queue QR code" className={compact ? 'h-44 w-44' : 'h-64 w-64'} src={dataUrl} /> : <LoadingState message="Generating QR code..." />}
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Button onClick={downloadPng} disabled={!dataUrl}><Download className="h-4 w-4" /> Download PNG</Button>

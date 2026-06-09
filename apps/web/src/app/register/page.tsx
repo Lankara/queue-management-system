@@ -3,10 +3,9 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
 import { AxiosError } from 'axios';
-import { ArrowRight, Building2, Store } from 'lucide-react';
+import { ArrowRight, Building2, Lock, Store } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
@@ -44,7 +43,7 @@ const schema = z.object({
   confirmPassword: z.string().min(8, 'Confirm your password'),
   preferredLanguage: z.enum(['en', 'si']),
   businessName: z.string().min(2, 'Business name is required'),
-  slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Use lowercase letters, numbers, and hyphens'),
+
   businessType: z.enum(['MEDICAL_CENTER', 'DOCTOR', 'CLINIC', 'HOSPITAL', 'BARBER_SHOP', 'BEAUTY_PARLOUR', 'SALON', 'SERVICE_SHOP', 'OTHER']),
   defaultLanguage: z.enum(['en', 'si']),
   timezone: z.string().min(1, 'Timezone is required'),
@@ -63,8 +62,9 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-function slugify(value: string) {
-  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+function createSlugPreview(value?: string) {
+  const base = value?.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 18).replace(/-+$/g, '');
+  return `${base || 'business'}-####`;
 }
 
 export default function RegisterPage() {
@@ -75,7 +75,6 @@ export default function RegisterPage() {
     register,
     handleSubmit,
     watch,
-    setValue,
     formState: { errors }
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -89,12 +88,7 @@ export default function RegisterPage() {
   });
 
   const businessName = watch('businessName');
-  useEffect(() => {
-    const currentSlug = watch('slug');
-    if (!currentSlug && businessName) {
-      setValue('slug', slugify(businessName));
-    }
-  }, [businessName, setValue, watch]);
+  const slugPreview = createSlugPreview(businessName);
 
   const mutation = useMutation({
     mutationFn: registerOwnerBusiness,
@@ -142,7 +136,11 @@ export default function RegisterPage() {
             <h2 className="mb-4 text-lg font-semibold text-slate-950">Step 2: Business setup</h2>
             <div className="grid gap-4 md:grid-cols-2">
               <Input label="Business name" error={errors.businessName?.message} {...register('businessName')} />
-              <Input label="Public slug" error={errors.slug?.message} {...register('slug')} />
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500"><Lock className="h-3.5 w-3.5" /> Public slug</div>
+                <div className="font-mono text-sm font-semibold text-slate-800">{slugPreview}</div>
+                <p className="mt-1 text-xs text-slate-500">Generated and locked by the system after registration.</p>
+              </div>
               <Select label="Business type" options={businessTypeOptions} error={errors.businessType?.message} {...register('businessType')} />
               <Select label="Default language" options={languageOptions} error={errors.defaultLanguage?.message} {...register('defaultLanguage')} />
               <Input label="Timezone" error={errors.timezone?.message} {...register('timezone')} />

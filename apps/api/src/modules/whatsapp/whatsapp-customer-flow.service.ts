@@ -1,4 +1,5 @@
-﻿import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { PoolClient } from 'pg';
 import { formatQueueNumber } from '../../common/utils/queue-number.util';
 import { normalizePhone } from '../../common/utils/phone.util';
@@ -49,7 +50,7 @@ export class WhatsAppCustomerFlowService {
 
     if (!options.ignoreCooldown && this.isCoolingDown(phone)) {
       const session = this.sessions.getSession(phone);
-      return { reply: session.language === 'si' ? 'කරුණාකර මොහොතක් රැඳී සිටින්න.' : 'Please wait a moment before sending again.', command: 'UNKNOWN', confidence: 0, state: session.step ?? 'IDLE' };
+      return { reply: session.language === 'si' ? '??????? ??????? ???? ???????.' : 'Please wait a moment before sending again.', command: 'UNKNOWN', confidence: 0, state: session.step ?? 'IDLE' };
     }
 
     const rawText = message.textBody ?? message.buttonReply ?? message.listReply ?? '';
@@ -78,7 +79,7 @@ export class WhatsAppCustomerFlowService {
       reply = await this.routeMessage(activeSession, message, rawText, command.command);
     } catch (error) {
       this.logger.warn(`WhatsApp customer flow failed command=${command.command} reason=${error instanceof Error ? error.message : 'unknown'}`);
-      reply = activeSession.language === 'si' ? 'කණගාටුයි, ඉල්ලීම සම්පූර්ණ කළ නොහැක. නැවත උත්සාහ කරන්න.' : 'Sorry, I could not complete that request. Please try again.';
+      reply = activeSession.language === 'si' ? '????????, ?????? ???????? ?? ?????. ???? ?????? ?????.' : 'Sorry, I could not complete that request. Please try again.';
     }
 
     const updated = this.sessions.getSession(phone);
@@ -149,10 +150,10 @@ export class WhatsAppCustomerFlowService {
     const business = await this.resolveDefaultBusiness();
     const identity = await this.ensureCustomerAndProfile(business, session.phone, language, profileName);
     if (identity.customer.is_online_booking_banned) {
-      return language === 'si' ? 'ඔබට online booking අවසර නැත. කරුණාකර counter එක අමතන්න.' : 'Online booking is currently blocked for this phone. Please contact the counter.';
+      return language === 'si' ? '??? online booking ???? ???. ??????? counter ?? ??????.' : 'Online booking is currently blocked for this phone. Please contact the counter.';
     }
     const joined = await this.createAndConfirmQueueEntry(business.id, service, identity.customer.id, identity.profile.id);
-    this.sessions.updateSession(session.phone, { step: 'WAITING_FOR_ACTION', currentIntent: 'JOIN_QUEUE', customerId: identity.customer.id, clientProfileId: identity.profile.id, data: { latestQueueEntryId: joined.queueEntryId, lastAction: { type: 'QUEUE_CREATED', queueEntryId: joined.queueEntryId, queueNumber: joined.queueNumber, status: 'CONFIRMED', position: joined.position } } });
+    this.sessions.updateSession(session.phone, { step: 'WAITING_FOR_ACTION', currentIntent: 'JOIN_QUEUE', customerId: identity.customer.id, clientProfileId: identity.profile.id, data: { latestQueueEntryId: joined.queueEntryId, lastAction: { type: 'QUEUE_REQUESTED', queueEntryId: joined.queueEntryId, queueNumber: joined.queueNumber, status: 'DRAFT', position: joined.position } } });
     return this.messages.queueJoined(language, joined);
   }
 
@@ -177,7 +178,7 @@ export class WhatsAppCustomerFlowService {
     const business = await this.resolveDefaultBusiness();
     const identity = await this.ensureCustomerAndProfile(business, session.phone, language, profileName);
     if (identity.customer.is_online_booking_banned) {
-      return language === 'si' ? 'ඔබට online booking අවසර නැත. කරුණාකර counter එක අමතන්න.' : 'Online booking is currently blocked for this phone. Please contact the counter.';
+      return language === 'si' ? '??? online booking ???? ???. ??????? counter ?? ??????.' : 'Online booking is currently blocked for this phone. Please contact the counter.';
     }
     const appointment = await this.createAppointmentRequest(business.id, service, identity.customer.id, identity.profile.id, start);
     this.sessions.updateSession(session.phone, { step: 'WAITING_FOR_ACTION', currentIntent: 'BOOK_APPOINTMENT', customerId: identity.customer.id, clientProfileId: identity.profile.id, data: { latestAppointmentId: appointment.appointmentId, lastAction: { type: 'APPOINTMENT_CREATED', appointmentId: appointment.appointmentId, status: 'PENDING_APPROVAL', requestedTime: appointment.requestedTime } } });
@@ -186,37 +187,37 @@ export class WhatsAppCustomerFlowService {
 
   private async handleCancelConfirmation(session: WhatsAppSessionState, text: string): Promise<string> {
     const language = session.language ?? 'en';
-    if (!['yes', 'y', 'ඔව්'].includes(text)) {
+    if (!['yes', 'y', '???'].includes(text)) {
       this.sessions.updateSession(session.phone, { step: 'WAITING_FOR_ACTION' });
       return this.messages.welcome(language);
     }
     const business = await this.resolveDefaultBusiness();
     const customer = await this.findCustomerByPhone(business.id, session.phone);
-    if (!customer) return language === 'si' ? 'අවලංගු කිරීමට appointment එකක් නොමැත.' : 'No appointment found to cancel.';
+    if (!customer) return language === 'si' ? '?????? ?????? appointment ???? ?????.' : 'No appointment found to cancel.';
     const cancelled = await this.cancelLatestAppointment(business.id, customer.id);
     this.sessions.updateSession(session.phone, { step: 'WAITING_FOR_ACTION' });
-    return cancelled ? this.messages.cancelled(language) : language === 'si' ? 'අවලංගු කිරීමට appointment එකක් නොමැත.' : 'No cancellable appointment found.';
+    return cancelled ? this.messages.cancelled(language) : language === 'si' ? '?????? ?????? appointment ???? ?????.' : 'No cancellable appointment found.';
   }
 
   private async buildStatusReply(session: WhatsAppSessionState): Promise<string> {
     const language = session.language ?? 'en';
     const business = await this.resolveDefaultBusiness();
     const customer = await this.findCustomerByPhone(business.id, session.phone);
-    if (!customer) return language === 'si' ? 'සක්‍රීය පෝලිමක් හෝ appointment එකක් නොමැත.' : 'No active queue or appointment found.';
+    if (!customer) return language === 'si' ? '??????? ??????? ?? appointment ???? ?????.' : 'No active queue or appointment found.';
 
     const queue = await this.findLatestQueueStatus(business.id, customer.id);
     if (queue) {
-      if (language === 'si') return `පෝලිම් අංකය: ${queue.queue_number}\nතත්ත්වය: ${queue.status}\nස්ථානය: ${queue.position}\nදැන් සේවාව: ${queue.current_number ?? 'ආරම්භ කර නැත'}`;
+      if (language === 'si') return `?????? ????: ${queue.queue_number}\n???????: ${queue.status}\n??????: ${queue.position}\n???? ?????: ${queue.current_number ?? '????? ?? ???'}`;
       return `Queue number: ${queue.queue_number}\nStatus: ${queue.status}\nPosition: ${queue.position}\nNow serving: ${queue.current_number ?? 'Not started'}`;
     }
 
     const appointment = await this.findLatestAppointmentStatus(business.id, customer.id);
     if (appointment) {
-      if (language === 'si') return `Appointment තත්ත්වය: ${appointment.status}\nවේලාව: ${new Date(appointment.requested_start_time).toLocaleString()}${appointment.queue_number ? `\nQueue: ${appointment.queue_number}` : ''}`;
+      if (language === 'si') return `Appointment ???????: ${appointment.status}\n?????: ${new Date(appointment.requested_start_time).toLocaleString()}${appointment.queue_number ? `\nQueue: ${appointment.queue_number}` : ''}`;
       return `Appointment status: ${appointment.status}\nTime: ${new Date(appointment.requested_start_time).toLocaleString()}${appointment.queue_number ? `\nQueue: ${appointment.queue_number}` : ''}`;
     }
 
-    return language === 'si' ? 'සක්‍රීය පෝලිමක් හෝ appointment එකක් නොමැත.' : 'No active queue or appointment found.';
+    return language === 'si' ? '??????? ??????? ?? appointment ???? ?????.' : 'No active queue or appointment found.';
   }
 
   private async maybeSendReply(phone: string, reply: string, suppressSend = false): Promise<void> {
@@ -325,14 +326,17 @@ export class WhatsAppCustomerFlowService {
       const settings = await client.query<{ queue_number_length: number }>(`SELECT queue_number_length FROM business_profile_settings WHERE business_id = $1 LIMIT 1`, [businessId]);
       const queueNumberLength = settings.rows[0]?.queue_number_length ?? 3;
       const queueDate = (await client.query<{ today: string }>(`SELECT CURRENT_DATE::text AS today`)).rows[0].today;
-      const queueCode = `WA-${service.branch_id?.slice(0, 8) ?? 'ALL'}-${service.id.slice(0, 8)}`;
-      const queue = await this.getOrCreateQueue(client, businessId, service, queueDate, queueCode);
-      const nextSequence = queue.last_issued_number + 1;
+      const queueCode = this.createQueueCode(service.branch_id, service.id);
+      const queue = await this.findOpenQueue(client, businessId, service, queueDate, queueCode);
+      if (!queue) {
+        throw new Error('Queue is not open yet');
+      }
+      const nextSequence = Math.max(queue.last_issued_number + 1, 1);
       const queueNumber = formatQueueNumber(nextSequence, queueNumberLength);
       await client.query(`UPDATE queues SET last_issued_number = $2, updated_at = now() WHERE id = $1`, [queue.id, nextSequence]);
       const entry = await client.query<{ id: string }>(
-        `INSERT INTO queue_entries (business_id, queue_id, branch_id, service_id, customer_id, client_profile_id, queue_number, queue_sequence, status, source, service_date, confirmed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'CONFIRMED', 'WHATSAPP', $9, now())
+        `INSERT INTO queue_entries (business_id, queue_id, branch_id, service_id, customer_id, client_profile_id, queue_number, queue_sequence, status, source, service_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'DRAFT', 'WHATSAPP', $9)
          RETURNING id`,
         [businessId, queue.id, service.branch_id, service.id, customerId, clientProfileId, queueNumber, nextSequence, queueDate]
       );
@@ -347,21 +351,18 @@ export class WhatsAppCustomerFlowService {
     }
   }
 
-  private async getOrCreateQueue(client: PoolClient, businessId: string, service: ServiceRow, queueDate: string, code: string): Promise<{ id: string; last_issued_number: number }> {
+  private async findOpenQueue(client: PoolClient, businessId: string, service: ServiceRow, queueDate: string, code: string): Promise<{ id: string; last_issued_number: number } | null> {
     const existing = await client.query<{ id: string; last_issued_number: number }>(
-      `SELECT id, last_issued_number FROM queues WHERE business_id = $1 AND code = $2 AND queue_date = $3 FOR UPDATE`,
-      [businessId, code, queueDate]
+      `SELECT id, last_issued_number FROM queues WHERE business_id = $1 AND code = $2 AND queue_date = $3 AND is_active = true AND ($4::uuid IS NULL OR branch_id = $4::uuid) AND service_id = $5 FOR UPDATE`,
+      [businessId, code, queueDate, service.branch_id, service.id]
     );
-    if (existing.rows[0]) return existing.rows[0];
-    const created = await client.query<{ id: string; last_issued_number: number }>(
-      `INSERT INTO queues (business_id, branch_id, service_id, queue_date, code)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, last_issued_number`,
-      [businessId, service.branch_id, service.id, queueDate, code]
-    );
-    return created.rows[0];
+    return existing.rows[0] ?? null;
   }
 
+  private createQueueCode(branchId: string | null, serviceId: string): string {
+    const queueKey = `${branchId ?? 'all'}:${serviceId ?? 'all'}`;
+    return `q:${createHash('sha256').update(queueKey).digest('hex').slice(0, 32)}`;
+  }
   private async calculateQueuePosition(businessId: string, queueEntryId: string): Promise<number> {
     const result = await this.databaseService.query<{ position: string }>(
       `SELECT COUNT(*) + 1 AS position
@@ -449,6 +450,3 @@ export class WhatsAppCustomerFlowService {
     return phone.length <= 4 ? '****' : `${phone.slice(0, 2)}***${phone.slice(-2)}`;
   }
 }
-
-
-

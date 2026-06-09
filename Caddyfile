@@ -1,0 +1,46 @@
+# Queue Management System production Caddyfile.
+# Replace APP_DOMAIN and API_DOMAIN in .env.production before starting Docker Compose.
+# DNS must point both records to the Oracle VM public IP:
+#   yourdomain.com      -> VM_PUBLIC_IP
+#   api.yourdomain.com  -> VM_PUBLIC_IP
+# Caddy automatically obtains and renews HTTPS certificates from Let's Encrypt.
+
+{
+    email {$CADDY_EMAIL}
+}
+
+{$APP_DOMAIN} {
+    encode zstd gzip
+
+    log {
+        output stdout
+        format console
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    reverse_proxy web:3000
+}
+
+{$API_DOMAIN} {
+    encode zstd gzip
+
+    log {
+        output stdout
+        format console
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    reverse_proxy api:4000
+}

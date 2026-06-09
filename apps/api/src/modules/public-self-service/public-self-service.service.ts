@@ -1,4 +1,4 @@
-﻿import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { ClientProfilesService } from '../client-profiles/client-profiles.service';
@@ -38,6 +38,19 @@ interface PublicServiceRow {
   branch_id: string | null;
 }
 
+interface PublicDirectoryBusinessRow {
+  id: string;
+  slug: string;
+  name: string;
+  business_type: string;
+  business_address: string | null;
+  business_phone: string | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  branch_code: string | null;
+  branch_address: string | null;
+  service_names: string[] | null;
+}
 interface PublicAppointmentRow {
   appointment_id: string;
   status: string;
@@ -55,6 +68,19 @@ interface PublicAppointmentRow {
   reschedule_reason: string | null;
 }
 
+export interface PublicDirectoryBusinessResponse {
+  id: string;
+  slug: string;
+  name: string;
+  businessType: string;
+  address: string | null;
+  phone: string | null;
+  branchId: string | null;
+  branchName: string | null;
+  branchCode: string | null;
+  locationLabel: string;
+  services: string[];
+}
 export interface PublicBusinessResponse {
   id: string;
   slug: string;
@@ -124,6 +150,70 @@ export class PublicSelfServiceService {
     private readonly appointmentsService: AppointmentsService
   ) {}
 
+  async searchPublicBusinesses(filters: { query?: string; businessType?: string }): Promise<PublicDirectoryBusinessResponse[]> {
+    const values: string[] = [];
+    const conditions = ['b.is_active = true'];
+    const query = filters.query?.trim();
+    const businessType = filters.businessType?.trim();
+
+    if (businessType && businessType !== 'ALL') {
+      values.push(businessType);
+      conditions.push(`b.business_type = $${values.length}`);
+    }
+
+    if (query) {
+      values.push(`%${query.toLowerCase()}%`);
+      conditions.push(`(
+        lower(b.name) LIKE $${values.length}
+        OR lower(b.business_type) LIKE $${values.length}
+        OR lower(COALESCE(b.address, '')) LIKE $${values.length}
+        OR lower(COALESCE(br.name, '')) LIKE $${values.length}
+        OR lower(COALESCE(br.address, '')) LIKE $${values.length}
+        OR EXISTS (
+          SELECT 1 FROM services search_services
+          WHERE search_services.business_id = b.id
+            AND search_services.is_active = true
+            AND lower(search_services.name) LIKE $${values.length}
+        )
+      )`);
+    }
+
+    const result = await this.databaseService.query<PublicDirectoryBusinessRow>(
+      `SELECT b.id,
+              b.slug,
+              b.name,
+              b.business_type,
+              b.address AS business_address,
+              b.phone AS business_phone,
+              br.id AS branch_id,
+              br.name AS branch_name,
+              br.code AS branch_code,
+              br.address AS branch_address,
+              COALESCE(array_agg(DISTINCT s.name) FILTER (WHERE s.id IS NOT NULL), '{}') AS service_names
+       FROM businesses b
+       LEFT JOIN branches br ON br.business_id = b.id AND br.is_active = true
+       LEFT JOIN services s ON s.business_id = b.id AND s.is_active = true AND (s.branch_id = br.id OR br.id IS NULL)
+       WHERE ${conditions.join(' AND ')}
+       GROUP BY b.id, b.slug, b.name, b.business_type, b.address, b.phone, br.id, br.name, br.code, br.address
+       ORDER BY b.name ASC, br.name ASC NULLS LAST
+       LIMIT 80`,
+      values
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      businessType: row.business_type,
+      address: row.branch_address ?? row.business_address,
+      phone: row.business_phone,
+      branchId: row.branch_id,
+      branchName: row.branch_name,
+      branchCode: row.branch_code,
+      locationLabel: row.branch_name ? `${row.name} - ${row.branch_name}` : row.name,
+      services: row.service_names ?? []
+    }));
+  }
   async getBusinessBySlug(businessSlug: string): Promise<PublicBusinessResponse> {
     const business = await this.resolveBusiness(businessSlug);
     const [branches, services] = await Promise.all([this.findActiveBranches(business.id), this.findActiveServices(business.id)]);
@@ -197,12 +287,17 @@ export class PublicSelfServiceService {
   async joinQueueDraft(businessSlug: string, data: PublicQueueJoinDto): Promise<QueueEntry> {
     const business = await this.resolveBusiness(businessSlug);
     if (!data.serviceId) throw new BadRequestException('Service is required to join the public queue');
+    const branchId = await this.resolvePublicQueueBranchId(business.id, data.serviceId, data.branchId);
     await this.assertCustomerAndProfileMatch(business.id, data.customerId, data.clientProfileId);
-    return this.queuesService.joinDraft(business.id, data);
+    return this.queuesService.joinDraft(business.id, { ...data, branchId });
   }
 
   async confirmQueueEntry(businessSlug: string, entryId: string, data: ConfirmQueueEntryDto): Promise<QueueEntry> {
     const business = await this.resolveBusiness(businessSlug);
+    const entry = await this.queuesService.getEntryForPublicConfirmation(business.id, entryId);
+    if (entry.status !== 'DRAFT') {
+      return entry;
+    }
     return this.queuesService.confirmEntry(business.id, entryId, data);
   }
 
@@ -351,6 +446,34 @@ export class PublicSelfServiceService {
     return result.rows.map((row) => ({ id: row.id, name: row.name, code: row.code, durationMinutes: row.duration_minutes, branchId: row.branch_id }));
   }
 
+  private async resolvePublicQueueBranchId(businessId: string, serviceId: string, branchId?: string): Promise<string | undefined> {
+    const service = await this.databaseService.query<{ id: string; branch_id: string | null }>(
+      'SELECT id, branch_id FROM services WHERE business_id = $1 AND id = $2 AND is_active = true LIMIT 1',
+      [businessId, serviceId]
+    );
+    const serviceRow = service.rows[0];
+    if (!serviceRow) throw new NotFoundException('Service not found');
+
+    if (branchId) {
+      const branch = await this.databaseService.query<{ id: string }>(
+        'SELECT id FROM branches WHERE business_id = $1 AND id = $2 AND is_active = true LIMIT 1',
+        [businessId, branchId]
+      );
+      if (!branch.rows[0]) throw new NotFoundException('Branch not found');
+      if (serviceRow.branch_id && serviceRow.branch_id !== branchId) {
+        throw new BadRequestException('Selected service does not belong to the selected branch');
+      }
+      return branchId;
+    }
+
+    if (serviceRow.branch_id) return serviceRow.branch_id;
+
+    const branches = await this.databaseService.query<{ id: string }>(
+      'SELECT id FROM branches WHERE business_id = $1 AND is_active = true ORDER BY name ASC LIMIT 2',
+      [businessId]
+    );
+    return branches.rows.length === 1 ? branches.rows[0].id : undefined;
+  }
   private async assertCustomerAndProfileMatch(businessId: string, customerId: string, clientProfileId: string): Promise<void> {
     await this.customersService.findById(businessId, customerId);
     const profile = await this.clientProfilesService.findById(businessId, clientProfileId);
@@ -365,9 +488,3 @@ export class PublicSelfServiceService {
     return { id: profile.id, customerId: profile.customerId, fullName: profile.fullName, relationshipToContact: profile.relationshipToContact, gender: profile.gender, ageYears: profile.ageYears };
   }
 }
-
-
-
-
-
-

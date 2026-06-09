@@ -1,4 +1,4 @@
-﻿import { Controller, ForbiddenException, Get, Query } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Query } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AuthenticatedUser } from '../auth/interfaces/auth-user.interface';
@@ -11,33 +11,33 @@ export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('dashboard-summary')
-  async getDashboardSummary(@Query('businessId') businessId: string, @CurrentUser() user?: AuthenticatedUser) {
+  async getDashboardSummary(@Query('businessId') businessId: string, @Query('branchId') branchId?: string, @CurrentUser() user?: AuthenticatedUser) {
     this.assertBusinessAccess(user, businessId);
-    return successResponse(await this.analyticsService.getDashboardSummary(businessId));
+    return successResponse(await this.analyticsService.getDashboardSummary(businessId, branchId));
   }
 
   @Get('queue-summary')
-  async getQueueSummary(@Query('businessId') businessId: string, @CurrentUser() user?: AuthenticatedUser) {
+  async getQueueSummary(@Query('businessId') businessId: string, @Query('branchId') branchId?: string, @CurrentUser() user?: AuthenticatedUser) {
     this.assertBusinessAccess(user, businessId);
-    return successResponse(await this.analyticsService.getQueueSummary(businessId));
+    return successResponse(await this.analyticsService.getQueueSummary(businessId, branchId));
   }
 
   @Get('appointment-summary')
-  async getAppointmentSummary(@Query('businessId') businessId: string, @CurrentUser() user?: AuthenticatedUser) {
+  async getAppointmentSummary(@Query('businessId') businessId: string, @Query('branchId') branchId?: string, @CurrentUser() user?: AuthenticatedUser) {
     this.assertBusinessAccess(user, businessId);
-    return successResponse(await this.analyticsService.getAppointmentSummary(businessId));
+    return successResponse(await this.analyticsService.getAppointmentSummary(businessId, branchId));
   }
 
   @Get('notification-summary')
-  async getNotificationSummary(@Query('businessId') businessId: string, @CurrentUser() user?: AuthenticatedUser) {
+  async getNotificationSummary(@Query('businessId') businessId: string, @Query('branchId') branchId?: string, @CurrentUser() user?: AuthenticatedUser) {
     this.assertBusinessAccess(user, businessId);
-    return successResponse(await this.analyticsService.getNotificationSummary(businessId));
+    return successResponse(await this.analyticsService.getNotificationSummary(businessId, branchId));
   }
 
   @Get('today-activity')
-  async getTodayActivity(@Query('businessId') businessId: string, @CurrentUser() user?: AuthenticatedUser) {
+  async getTodayActivity(@Query('businessId') businessId: string, @Query('branchId') branchId?: string, @CurrentUser() user?: AuthenticatedUser) {
     this.assertBusinessAccess(user, businessId);
-    return successResponse(await this.analyticsService.getTodayActivity(businessId));
+    return successResponse(await this.analyticsService.getTodayActivity(businessId, branchId));
   }
 
   private assertBusinessAccess(user: AuthenticatedUser | undefined, businessId?: string): void {

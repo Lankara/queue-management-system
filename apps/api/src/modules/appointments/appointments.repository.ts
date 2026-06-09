@@ -1,4 +1,4 @@
-﻿import { Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { PoolClient } from 'pg';
 import { formatQueueNumber } from '../../common/utils/queue-number.util';
@@ -170,7 +170,7 @@ export class AppointmentsRepository {
       const queueDate = await this.getDateFromTimestamp(client, approvedStart);
       const queueNumberLength = await this.getQueueNumberLength(client, businessId);
       const queue = await this.getOrCreateQueue(client, businessId, appointment.branchId, appointment.serviceId, queueDate);
-      const nextSequence = queue.lastIssuedNumber + 1;
+      const nextSequence = Math.max(queue.lastIssuedNumber + 1, 1);
       const queueNumber = formatQueueNumber(nextSequence, queueNumberLength);
 
       await client.query(`UPDATE queues SET last_issued_number = $2, updated_at = now() WHERE id = $1`, [queue.id, nextSequence]);

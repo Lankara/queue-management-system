@@ -14,5 +14,6 @@ const toneByStatus: Record<QueueStatus, 'green' | 'red' | 'slate' | 'teal'> = {
 };
 
 export function QueueStatusBadge({ status }: { status: QueueStatus }) {
-  return <Badge tone={toneByStatus[status]}>{status}</Badge>;
+  const label = status === 'DRAFT' ? 'PENDING_APPROVAL' : status;
+  return <Badge tone={toneByStatus[status]}>{label}</Badge>;
 }

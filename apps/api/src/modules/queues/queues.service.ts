@@ -5,6 +5,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CallNextDto } from './dto/call-next.dto';
 import { ConfirmQueueEntryDto } from './dto/confirm-queue-entry.dto';
 import { CreateQueueJoinDto } from './dto/create-queue-join.dto';
+import { OpenQueueDto } from './dto/open-queue.dto';
 import { QueuePositionQueryDto } from './dto/queue-position-query.dto';
 import { RejectQueueEntryDto } from './dto/reject-queue-entry.dto';
 import { TodayQueuesQueryDto } from './dto/today-queues-query.dto';
@@ -22,8 +23,15 @@ export class QueuesService {
 
   async joinDraft(businessId: string, data: CreateQueueJoinDto): Promise<QueueEntry> {
     try {
-      return await this.queuesRepository.createDraftEntry(businessId, data, this.createQueueCode(data.branchId, data.serviceId));
+      const entry = await this.queuesRepository.createDraftEntry(businessId, data, this.createQueueCode(data.branchId, data.serviceId));
+      if (!entry) {
+        throw new BadRequestException('Queue is not open yet. Please contact staff or try again later.');
+      }
+      return entry;
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw mapDatabaseError(error);
     }
   }
@@ -54,6 +62,14 @@ export class QueuesService {
     }
   }
 
+
+  async getEntryForPublicConfirmation(businessId: string, entryId: string): Promise<QueueEntry> {
+    const entry = await this.queuesRepository.findEntryByIdForBusiness(businessId, entryId);
+    if (!entry) {
+      throw new NotFoundException('Queue entry not found');
+    }
+    return entry;
+  }
   async rejectEntry(businessId: string, entryId: string, _data: RejectQueueEntryDto): Promise<QueueEntry> {
     try {
       const entry = await this.queuesRepository.rejectEntry(businessId, entryId);
@@ -86,6 +102,36 @@ export class QueuesService {
     return this.queuesRepository.findTodayQueues(businessId, query.branchId, query.serviceId);
   }
 
+  async openQueue(businessId: string, data: OpenQueueDto): Promise<Queue> {
+    try {
+      return await this.queuesRepository.openQueue(businessId, data.branchId ?? null, data.serviceId ?? null, this.createQueueCode(data.branchId, data.serviceId));
+    } catch (error) {
+      throw mapDatabaseError(error);
+    }
+  }
+
+  async closeQueue(businessId: string, queueId: string): Promise<Queue> {
+    try {
+      const queue = await this.queuesRepository.closeQueue(businessId, queueId);
+      if (!queue) throw new NotFoundException('Queue not found');
+      return queue;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      throw mapDatabaseError(error);
+    }
+  }
+
+  findOpenActiveQueues(businessId: string, query: TodayQueuesQueryDto): Promise<Queue[]> {
+    return this.queuesRepository.findOpenActiveQueues(businessId, query.branchId, query.serviceId);
+  }
+
+  findPendingRequests(businessId: string, query: TodayQueuesQueryDto): Promise<QueueEntry[]> {
+    return this.queuesRepository.findPendingRequests(businessId, query.branchId, query.serviceId);
+  }
+
+  approveEntry(businessId: string, entryId: string, data: ConfirmQueueEntryDto): Promise<QueueEntry> {
+    return this.confirmEntry(businessId, entryId, data);
+  }
   findEntriesByQueueId(businessId: string, queueId: string): Promise<QueueEntry[]> {
     return this.queuesRepository.findEntriesByQueueId(businessId, queueId);
   }
@@ -96,6 +142,20 @@ export class QueuesService {
       if (!entry) {
         throw new NotFoundException('No confirmed or waiting queue entries found');
       }
+
+      await this.createQueueNotification(businessId, entry.id, 'QUEUE_POSITION_UPDATED', {
+        alert_type: 'NOW_SERVING',
+        message: 'Your queue number is now being served.'
+      });
+
+      const nextEntry = await this.queuesRepository.findNextCallableEntry(businessId, queueId);
+      if (nextEntry) {
+        await this.createQueueNotification(businessId, nextEntry.id, 'QUEUE_POSITION_UPDATED', {
+          alert_type: 'BE_PREPARED',
+          message: 'Your queue number is next. Please be prepared.'
+        });
+      }
+
       return entry;
     } catch (error) {
       if (error instanceof NotFoundException) {

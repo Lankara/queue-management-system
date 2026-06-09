@@ -6,6 +6,11 @@ export interface TodayQueuesFilters {
   serviceId?: string;
 }
 
+export interface OpenQueuePayload {
+  branchId?: string;
+  serviceId?: string;
+}
+
 export interface QueueJoinPayload {
   branchId?: string;
   serviceId?: string;
@@ -22,6 +27,34 @@ export function listTodayQueues(businessId: string, filters: TodayQueuesFilters 
   return apiGet<Queue[]>(`/businesses/${businessId}/queues/today${suffix}`);
 }
 
+
+export function openQueue(businessId: string, data: OpenQueuePayload): Promise<Queue> {
+  return apiPost<Queue, OpenQueuePayload>(`/businesses/${businessId}/queues/open`, data);
+}
+
+export function closeQueue(businessId: string, queueId: string): Promise<Queue> {
+  return apiPatch<Queue, Record<string, never>>(`/businesses/${businessId}/queues/${queueId}/close`, {});
+}
+
+export function listOpenActiveQueues(businessId: string, filters: TodayQueuesFilters = {}): Promise<Queue[]> {
+  const params = new URLSearchParams();
+  if (filters.branchId) params.set('branchId', filters.branchId);
+  if (filters.serviceId) params.set('serviceId', filters.serviceId);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return apiGet<Queue[]>(`/businesses/${businessId}/queues/open-active${suffix}`);
+}
+
+export function listPendingQueueRequests(businessId: string, filters: TodayQueuesFilters = {}): Promise<QueueEntry[]> {
+  const params = new URLSearchParams();
+  if (filters.branchId) params.set('branchId', filters.branchId);
+  if (filters.serviceId) params.set('serviceId', filters.serviceId);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return apiGet<QueueEntry[]>(`/businesses/${businessId}/queues/pending-requests${suffix}`);
+}
+
+export function approveQueueEntry(businessId: string, entryId: string): Promise<QueueEntry> {
+  return apiPatch<QueueEntry, Record<string, never>>(`/businesses/${businessId}/queue-entries/${entryId}/approve`, {});
+}
 export function listQueueEntries(businessId: string, queueId: string): Promise<QueueEntry[]> {
   return apiGet<QueueEntry[]>(`/businesses/${businessId}/queues/${queueId}/entries`);
 }

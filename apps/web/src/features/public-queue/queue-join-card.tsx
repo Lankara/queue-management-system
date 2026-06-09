@@ -1,10 +1,23 @@
-﻿'use client';
+'use client';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Select } from '@/components/ui/select';
-import { PublicBusiness } from '@/types/public-queue';
+import { PublicBusiness, PublicBranchSummary, PublicServiceSummary } from '@/types/public-queue';
+
+function isMainBranch(branch?: PublicBranchSummary) {
+  const name = branch?.name?.toLowerCase().trim();
+  const code = branch?.code?.toLowerCase().trim();
+  return name === 'main' || name === 'main branch' || code === 'main';
+}
+
+function serviceBelongsToBranch(service: PublicServiceSummary, branchId: string, branches: PublicBranchSummary[]) {
+  if (!branchId) return true;
+  if (service.branchId === branchId) return true;
+  const branch = branches.find((item) => item.id === branchId);
+  return !service.branchId && isMainBranch(branch);
+}
 
 export function QueueJoinCard({
   business,
@@ -30,7 +43,8 @@ export function QueueJoinCard({
   preselectedFromQr?: boolean;
 }) {
   const branch = business.branches.find((item) => item.id === branchId);
-  const service = business.services.find((item) => item.id === serviceId);
+  const availableServices = branchId ? business.services.filter((item) => serviceBelongsToBranch(item, branchId, business.branches)) : business.services;
+  const service = availableServices.find((item) => item.id === serviceId) ?? business.services.find((item) => item.id === serviceId);
 
   return (
     <Card className="grid gap-4">
@@ -44,7 +58,7 @@ export function QueueJoinCard({
       </div>
       {warning ? <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{warning}</div> : null}
       <Select label="Branch" placeholder="No branch" value={branchId} onChange={(event) => onBranchChange(event.target.value)} options={business.branches.map((item) => ({ label: item.name, value: item.id }))} />
-      <Select label="Service" placeholder="Select service" value={serviceId} error={error ?? undefined} onChange={(event) => onServiceChange(event.target.value)} options={business.services.map((item) => ({ label: item.name, value: item.id }))} />
+      <Select label="Service" placeholder={availableServices.length === 0 ? 'No Service' : branchId ? 'Select service' : 'Select branch first or choose any service'} value={serviceId} error={error ?? undefined} disabled={availableServices.length === 0} onChange={(event) => onServiceChange(event.target.value)} options={availableServices.map((item) => ({ label: item.name, value: item.id }))} />
       {error ? <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{error}</div> : null}
       <Button disabled={!serviceId} isLoading={isLoading} onClick={onJoin}>Join queue</Button>
     </Card>

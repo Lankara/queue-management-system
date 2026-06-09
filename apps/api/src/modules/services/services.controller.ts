@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
 import { BusinessParam } from '../auth/decorators/business-param.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { successResponse } from '../../common/responses/api-response';
@@ -25,6 +25,11 @@ export class ServicesController {
   @Get(':id')
   async findById(@Param('businessId') businessId: string, @Param('id') id: string) {
     return successResponse(await this.servicesService.findById(businessId, id));
+  }
+
+  @Delete(':id')
+  async delete(@Param('businessId') businessId: string, @Param('id') id: string) {
+    return successResponse(await this.servicesService.delete(businessId, id));
   }
 
   @Patch(':id')

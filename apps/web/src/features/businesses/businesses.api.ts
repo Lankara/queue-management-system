@@ -3,7 +3,6 @@ import { Business, BusinessType, LanguageCode } from '@/types/business-setup';
 
 export interface BusinessPayload {
   name: string;
-  slug: string;
   businessType: BusinessType;
   defaultLanguage?: LanguageCode;
   timezone?: string;

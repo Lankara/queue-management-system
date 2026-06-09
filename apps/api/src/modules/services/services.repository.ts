@@ -50,6 +50,14 @@ export class ServicesRepository {
     return this.mapRow(result.rows[0]);
   }
 
+  async delete(businessId: string, id: string): Promise<boolean> {
+    const result = await this.databaseService.query(
+      `DELETE FROM services WHERE business_id = $1 AND id = $2`,
+      [businessId, id]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async update(businessId: string, id: string, data: UpdateServiceDto): Promise<BusinessServiceItem | null> {
     const fieldMap: Record<string, string> = {
       branchId: 'branch_id',

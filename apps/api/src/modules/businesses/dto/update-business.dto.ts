@@ -7,9 +7,6 @@ export class UpdateBusinessDto {
   @IsString()
   name?: string;
 
-  @IsOptional()
-  @IsString()
-  slug?: string;
 
   @IsOptional()
   @IsIn(BUSINESS_TYPES)

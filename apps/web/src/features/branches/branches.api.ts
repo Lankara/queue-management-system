@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from '@/lib/api-client';
+import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api-client';
 import { Branch } from '@/types/business-setup';
 
 export interface BranchPayload {
@@ -19,4 +19,8 @@ export function createBranch(businessId: string, data: BranchPayload): Promise<B
 
 export function updateBranch(businessId: string, id: string, data: Partial<BranchPayload>): Promise<Branch> {
   return apiPatch<Branch, Partial<BranchPayload>>(`/businesses/${businessId}/branches/${id}`, data);
+}
+
+export function deleteBranch(businessId: string, id: string): Promise<{ deleted: true }> {
+  return apiDelete<{ deleted: true }>(`/businesses/${businessId}/branches/${id}`);
 }
