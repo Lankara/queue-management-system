@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AxiosError } from 'axios';
@@ -249,7 +249,7 @@ export default function BusinessesPage() {
                   <h2 className="flex items-center gap-2 text-base font-semibold text-slate-950"><GitBranch className="h-4 w-4 text-teal-700" /> Branch</h2>
                   <p className="text-sm text-slate-600">Every service belongs to one branch. Single-location businesses can lock the branch as Main.</p>
                 </div>
-                {branches.length > 0 && !isMainBranchLocked ? <Button type="button" onClick={() => { setShowBranchForm((value) => !value); setShowServiceForm(false); }}><Plus className="h-4 w-4" />Add Branch</Button> : null}
+                {!isMainBranchLocked ? <Button type="button" onClick={() => { setShowBranchForm((value) => !value); setShowServiceForm(false); }}><Plus className="h-4 w-4" />Add Branch</Button> : null}
               </div>
 
               {branches.length === 0 ? (
@@ -259,7 +259,10 @@ export default function BusinessesPage() {
                       <h3 className="flex items-center gap-2 font-semibold text-teal-950"><Lock className="h-4 w-4" />Lock as Main branch</h3>
                       <p className="mt-1 text-sm text-teal-800">Use this for one-location businesses. The system creates a branch named Main, then you only create services under it.</p>
                     </div>
-                    <Button type="button" isLoading={createBranchMutation.isPending} onClick={createMainBranch}>Use Main Branch</Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" isLoading={createBranchMutation.isPending} onClick={createMainBranch}>Use Main Branch</Button>
+                      <Button type="button" variant="secondary" onClick={() => { setShowBranchForm(true); setShowServiceForm(false); }}><Plus className="h-4 w-4" />Add Branch</Button>
+                    </div>
                   </div>
                 </Card>
               ) : null}

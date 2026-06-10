@@ -25,4 +25,9 @@ export class CreateQueueJoinDto {
 
   @IsIn(QUEUE_SOURCES)
   source!: QueueSource;
+
+  @IsOptional()
+  @IsString()
+  @IsPostgresUuid('insertBeforeEntryId')
+  insertBeforeEntryId?: string;
 }

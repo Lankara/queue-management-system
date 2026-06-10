@@ -7,30 +7,50 @@ import { useState } from 'react';
 import { PublicLayout } from '@/components/public/public-layout';
 import { Badge } from '@/components/ui/badge';
 import { ErrorState, LoadingState } from '@/components/ui/state';
+import { CurrentQueueBookingsCard } from '@/features/public-queue/current-queue-bookings-card';
 import { QueueStatusCard } from '@/features/public-queue/queue-status-card';
 import { getPublicBusiness, getPublicQueuePosition } from '@/features/public-queue/public-queue.api';
 import { usePublicQueueStore } from '@/store/public-queue-store';
+import { QueuePosition } from '@/types/queue';
 
 export default function PublicQueueStatusPage() {
   const params = useParams<{ businessSlug: string; queueEntryId: string }>();
   const queryClient = useQueryClient();
   const [manualCheckMessage, setManualCheckMessage] = useState<string | null>(null);
   const queueEntry = usePublicQueueStore((state) => state.queueEntry);
+  const queueBookings = usePublicQueueStore((state) => state.queueBookings ?? []);
   const setQueueEntry = usePublicQueueStore((state) => state.setQueueEntry);
+  const removeQueueBooking = usePublicQueueStore((state) => state.removeQueueBooking);
   const clientProfile = usePublicQueueStore((state) => state.clientProfile);
   const selectedServiceId = usePublicQueueStore((state) => state.selectedServiceId);
   const selectedBranchId = usePublicQueueStore((state) => state.selectedBranchId);
   const businessQuery = useQuery({ queryKey: ['public-business', params.businessSlug], queryFn: () => getPublicBusiness(params.businessSlug) });
   const business = businessQuery.data;
+  const [bookingPositions, setBookingPositions] = useState<Record<string, QueuePosition | undefined>>({});
   const positionQueryKey = ['public-queue-position', params.businessSlug, params.queueEntryId] as const;
-  const positionQuery = useQuery({ queryKey: positionQueryKey, queryFn: () => getPublicQueuePosition(params.businessSlug, params.queueEntryId), enabled: Boolean(business), refetchInterval: 15000, retry: false });
+  const positionQuery = useQuery({
+    queryKey: positionQueryKey,
+    queryFn: () => getPublicQueuePosition(params.businessSlug, params.queueEntryId),
+    enabled: Boolean(business),
+    refetchInterval: 15000,
+    retry: false
+  });
   const manualPositionCheck = useMutation({
-    mutationFn: () => getPublicQueuePosition(params.businessSlug, params.queueEntryId, { logNotification: true }),
-    onSuccess: (position) => {
+    mutationFn: (entryId: string) => getPublicQueuePosition(params.businessSlug, entryId, { logNotification: true }),
+    onSuccess: (position, entryId) => {
+      setBookingPositions((current) => ({ ...current, [entryId]: position }));
+      if (entryId !== params.queueEntryId) {
+        setManualCheckMessage(`Ongoing number: ${position.currentServingNumber ?? 'Not started yet'}.`);
+        return;
+      }
       queryClient.setQueryData(positionQueryKey, position);
       setManualCheckMessage(`Current serving number: ${position.currentServingNumber ?? 'Not started yet'}. WhatsApp update queued if messaging is enabled.`);
     },
-    onError: () => setManualCheckMessage('Could not check the current serving number. Please try again.')
+    onError: (_error, entryId) => {
+      removeQueueBooking(entryId);
+      if (entryId === params.queueEntryId) setQueueEntry(null);
+      setManualCheckMessage('Could not check that booking. It may no longer be active.');
+    }
   });
 
   if (businessQuery.isLoading) return <PublicLayout title="Loading"><LoadingState message="Loading business..." /></PublicLayout>;
@@ -40,6 +60,7 @@ export default function PublicQueueStatusPage() {
   const branch = business.branches.find((item) => item.id === selectedBranchId);
   const displayPosition = positionQuery.data;
   const isMissingLiveEntry = Boolean(positionQuery.error);
+  const mergedPositions = displayPosition ? { ...bookingPositions, [params.queueEntryId]: displayPosition } : bookingPositions;
 
   return (
     <PublicLayout title={business.name} subtitle="Live queue status refreshes every 15 seconds.">
@@ -50,11 +71,12 @@ export default function PublicQueueStatusPage() {
           <Link className="text-sm font-semibold text-teal-700 underline" href={`/q/${params.businessSlug}/join`} onClick={() => setQueueEntry(null)}>Start a new queue request</Link>
         </div>
       ) : null}
+      {queueBookings.length > 0 ? <CurrentQueueBookingsCard business={business} bookings={queueBookings} positions={mergedPositions} checkingId={manualPositionCheck.isPending ? manualPositionCheck.variables : null} onCheck={(booking) => manualPositionCheck.mutate(booking.id)} /> : null}
       <div className="rounded-md border border-teal-100 bg-white p-4 shadow-sm">
         <button
           type="button"
-          onClick={() => manualPositionCheck.mutate()}
-          disabled={manualPositionCheck.isPending || isMissingLiveEntry}
+          onClick={() => manualPositionCheck.mutate(params.queueEntryId)}
+          disabled={manualPositionCheck.isPending}
           className="w-full rounded-md bg-teal-700 px-4 py-3 text-base font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
         >
           {manualPositionCheck.isPending ? 'Checking...' : 'Check current serving number'}

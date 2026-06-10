@@ -12,6 +12,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Select } from '@/components/ui/select';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/state';
+import { AppointmentStatusBadge } from '@/features/appointments/appointment-status-badge';
+import { approveAppointment, cancelAppointmentByOperator, listAppointments, rejectAppointment } from '@/features/appointments/appointments.api';
 import { WarningBanner } from '@/components/warning-banner';
 import { listBranches } from '@/features/branches/branches.api';
 import { createClientProfile, listClientProfiles } from '@/features/client-profiles/client-profiles.api';
@@ -24,6 +26,7 @@ import { QueueFilters } from '@/features/queues/queue-filters';
 import { approveQueueEntry, callNextQueueEntry, closeQueue, completeQueueEntry, getQueuePosition, joinQueueDraft, listPendingQueueRequests, listQueueEntries, listTodayQueues, markQueueEntryNoShow, openQueue, rejectQueueEntry, startQueueEntryService } from '@/features/queues/queues.api';
 import { listServices } from '@/features/services/services.api';
 import { useBusinessStore } from '@/store/business-store';
+import { Appointment } from '@/types/appointment';
 import { Branch, Service } from '@/types/business-setup';
 import { ClientProfile, Customer } from '@/types/customer-profile';
 import { Queue, QueueEntry } from '@/types/queue';
@@ -54,6 +57,33 @@ function serviceBelongsToBranch(service: Service, branchId: string, branches: Br
   if (service.branchId === branchId) return true;
   const branch = branches.find((item) => item.id === branchId);
   return !service.branchId && isMainBranch(branch);
+}
+
+function getTodayRange() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
+function formatTime(value?: string | null) {
+  return value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--';
+}
+
+function getGapText(appointment: Appointment) {
+  const target = appointment.approvedStartTime ?? appointment.requestedStartTime;
+  const minutes = Math.round((new Date(target).getTime() - Date.now()) / 60000);
+  if (minutes <= 0) return 'Due now';
+  if (minutes < 60) return `${minutes} min gap`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest > 0 ? `${hours}h ${rest}m gap` : `${hours}h gap`;
+}
+
+function hasConsiderableAppointmentGap(appointment: Appointment, minimumGapMinutes = 20) {
+  const target = appointment.approvedStartTime ?? appointment.requestedStartTime;
+  return new Date(target).getTime() - Date.now() >= minimumGapMinutes * 60000;
 }
 
 function queueBelongsToBranch(queue: Queue, branchId: string, branches: Branch[], services: Service[]) {
@@ -223,6 +253,72 @@ function QueueTimeSlotBoard({ entries, selectedEntryId, currentNumber, actionEnt
     </div>
   );
 }
+
+function QueueAppointmentCounter({
+  appointments,
+  customers,
+  branches,
+  services,
+  busyAppointmentId,
+  onApprove,
+  onReject,
+  onCancel
+}: {
+  appointments: Appointment[];
+  customers: Customer[];
+  branches: Branch[];
+  services: Service[];
+  busyAppointmentId?: string | null;
+  onApprove: (appointment: Appointment) => void;
+  onReject: (appointment: Appointment) => void;
+  onCancel: (appointment: Appointment) => void;
+}) {
+  const pendingCount = appointments.filter((appointment) => appointment.status === 'PENDING_APPROVAL').length;
+  const approvedCount = appointments.filter((appointment) => ['APPROVED', 'IN_QUEUE'].includes(appointment.status)).length;
+
+  return (
+    <SectionCard title="Appointments at counter" description="Approve appointment requests while watching walk-ins and queue gaps." action={<div className="flex gap-2"><Badge tone="slate">Pending {pendingCount}</Badge><Badge tone="green">Approved {approvedCount}</Badge></div>}>
+      <div className="grid gap-3">
+        {appointments.length === 0 ? <EmptyState title="No appointments for this selection" description="Walk-ins and online queue bookings can fill this counter time." /> : null}
+        {appointments.length > 0 ? (
+          <div className="max-h-72 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
+            <div className="grid gap-2">
+              {appointments.map((appointment) => {
+                const customer = customers.find((item) => item.id === appointment.customerId);
+                const branch = branches.find((item) => item.id === appointment.branchId);
+                const service = services.find((item) => item.id === appointment.serviceId);
+                const isPending = appointment.status === 'PENDING_APPROVAL';
+                const canCancel = ['PENDING_APPROVAL', 'APPROVED', 'RESCHEDULE_PROPOSED', 'RESCHEDULE_ACCEPTED'].includes(appointment.status);
+                const isBusy = busyAppointmentId === appointment.id;
+
+                return (
+                  <Card key={appointment.id} className="grid gap-2 border-slate-200 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-bold text-slate-950">{formatTime(appointment.approvedStartTime ?? appointment.requestedStartTime)}</span>
+                          <AppointmentStatusBadge status={appointment.status} />
+                          {appointment.queueNumber ? <Badge tone="teal">Queue {appointment.queueNumber}</Badge> : null}
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">{branch?.name ?? 'Branch'} / {service?.name ?? 'Service'} / {getGapText(appointment)}</p>
+                        <p className="mt-1 text-sm font-medium text-slate-800">{customer?.primaryPhone ?? 'Customer'} <span className="text-xs font-normal text-slate-500">Client {appointment.clientProfileId.slice(0, 8)}</span></p>
+                      </div>
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {isPending ? <Button className="h-8 px-2 text-xs" disabled={isBusy} isLoading={isBusy} onClick={() => onApprove(appointment)}>Approve</Button> : null}
+                        {isPending ? <Button className="h-8 px-2 text-xs" variant="secondary" disabled={isBusy} onClick={() => onReject(appointment)}>Reject</Button> : null}
+                        {canCancel && !isPending ? <Button className="h-8 px-2 text-xs" variant="secondary" disabled={isBusy} onClick={() => onCancel(appointment)}>Cancel</Button> : null}
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </SectionCard>
+  );
+}
 export default function QueuesPage() {
   const queryClient = useQueryClient();
   const businessId = useBusinessStore((state) => state.selectedBusinessId);
@@ -244,6 +340,13 @@ export default function QueuesPage() {
   const servicesQuery = useQuery({ queryKey: ['services', businessId], queryFn: () => listServices(businessId as string), enabled: Boolean(businessId && branchesQuery.isSuccess) });
   const queuesQuery = useQuery({ queryKey: ['queues-today', businessId, { branchId, serviceId }], queryFn: () => listTodayQueues(businessId as string, { branchId: branchId || undefined, serviceId: serviceId || undefined }), enabled: Boolean(businessId), refetchInterval: 15000 });
   const summaryQueuesQuery = useQuery({ queryKey: ['queues-today-summary', businessId, { branchId }], queryFn: () => listTodayQueues(businessId as string, { branchId: branchId || undefined }), enabled: Boolean(businessId), refetchInterval: 15000 });
+  const todayRange = useMemo(() => getTodayRange(), []);
+  const appointmentsQuery = useQuery({
+    queryKey: ['queue-counter-appointments', businessId, { branchId, serviceId, todayRange }],
+    queryFn: () => listAppointments(businessId as string, { serviceId: serviceId || undefined, from: todayRange.from, to: todayRange.to }),
+    enabled: Boolean(businessId),
+    refetchInterval: 20000
+  });
   const queueEntryQueries = useQueries({
     queries: (queuesQuery.data ?? []).map((queue) => ({
       queryKey: ['queue-entries', businessId, queue.id],
@@ -282,6 +385,29 @@ export default function QueuesPage() {
 
   const selectedQueueEntries = selectedQueue ? allEntriesByQueueId.get(selectedQueue.id) ?? [] : [];
   const pendingRequests = pendingRequestsQuery.data ?? [];
+  const counterAppointments = useMemo(() => (appointmentsQuery.data ?? [])
+    .filter((appointment) => !branchId || appointment.branchId === branchId)
+    .filter((appointment) => !serviceId || appointment.serviceId === serviceId)
+    .filter((appointment) => !['REJECTED', 'CANCELLED_BY_CUSTOMER', 'CANCELLED_BY_OPERATOR', 'COMPLETED', 'NO_SHOW'].includes(appointment.status))
+    .sort((a, b) => new Date(a.approvedStartTime ?? a.requestedStartTime).getTime() - new Date(b.approvedStartTime ?? b.requestedStartTime).getTime()), [appointmentsQuery.data, branchId, serviceId]);
+  const firstFutureAppointmentSlot = useMemo(() => counterAppointments.find((appointment) => appointment.queueEntryId && ['APPROVED', 'IN_QUEUE'].includes(appointment.status) && hasConsiderableAppointmentGap(appointment)), [counterAppointments]);
+
+  function getInsertBeforeFutureAppointmentId(entry: QueueEntry): string | undefined {
+    if (entry.status !== 'DRAFT') return undefined;
+    const futureAppointment = counterAppointments.find((appointment) => {
+      if (!appointment.queueEntryId || appointment.queueEntryId === entry.id) return false;
+      if (!['APPROVED', 'IN_QUEUE'].includes(appointment.status)) return false;
+      if (!hasConsiderableAppointmentGap(appointment)) return false;
+      if (appointment.serviceId !== entry.serviceId) return false;
+      if ((appointment.branchId ?? '') !== (entry.branchId ?? '')) return false;
+      const appointmentEntry = selectedQueueEntries.find((item) => item.id === appointment.queueEntryId);
+      return !appointmentEntry || entry.queueSequence > appointmentEntry.queueSequence;
+    });
+
+    if (!futureAppointment?.queueEntryId) return undefined;
+    const appointmentTime = new Date(futureAppointment.approvedStartTime ?? futureAppointment.requestedStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return window.confirm(`Appointment queue number ${futureAppointment.queueNumber} is scheduled for ${appointmentTime}. Confirm this request before that appointment and move the appointment to the next number?`) ? futureAppointment.queueEntryId : undefined;
+  }
   const queuesWithEntries = allEntriesByQueueId;
   const selectedEntryCustomer = customersQuery.data?.find((customer) => customer.id === selectedEntry?.customerId);
   const selectedEntryClientProfile = selectedCustomerProfilesQuery.data?.find((profile) => profile.id === selectedEntry?.clientProfileId);
@@ -451,7 +577,7 @@ export default function QueuesPage() {
         return callNextQueueEntry(businessId, selectedQueue.id);
       }
       if (!selectedEntry) throw new Error('Select an entry first');
-      if (action === 'confirm') return approveQueueEntry(businessId, selectedEntry.id);
+      if (action === 'confirm') return approveQueueEntry(businessId, selectedEntry.id, { insertBeforeEntryId: getInsertBeforeFutureAppointmentId(selectedEntry) });
       if (action === 'reject') return rejectQueueEntry(businessId, selectedEntry.id);
       if (action === 'start') return startQueueEntryService(businessId, selectedEntry.id);
       if (action === 'complete') return completeQueueEntry(businessId, selectedEntry.id);
@@ -470,7 +596,10 @@ export default function QueuesPage() {
   const slotApprovalMutation = useMutation({
     mutationFn: async ({ entryId, action }: { entryId: string; action: 'confirm' | 'reject' | 'no-show' }) => {
       if (!businessId) throw new Error('Select a business first');
-      if (action === 'confirm') return approveQueueEntry(businessId, entryId);
+      if (action === 'confirm') {
+        const entry = selectedQueueEntries.find((item) => item.id === entryId);
+        return approveQueueEntry(businessId, entryId, { insertBeforeEntryId: entry ? getInsertBeforeFutureAppointmentId(entry) : undefined });
+      }
       if (action === 'reject') return rejectQueueEntry(businessId, entryId);
       return markQueueEntryNoShow(businessId, entryId);
     },
@@ -486,7 +615,11 @@ export default function QueuesPage() {
   const manualJoinMutation = useMutation({
     mutationFn: async () => {
       if (!businessId || !lookupCustomer || !lookupProfile) throw new Error('Select customer and client profile first');
-      return joinQueueDraft(businessId, { customerId: lookupCustomer.id, clientProfileId: lookupProfile.id, branchId: joinBranchId || branchId || undefined, serviceId: joinServiceId || serviceId || undefined, source: 'OPERATOR' });
+      const targetServiceId = joinServiceId || serviceId || undefined;
+      const targetBranchId = joinBranchId || branchId || undefined;
+      const futureAppointment = firstFutureAppointmentSlot && (!targetServiceId || firstFutureAppointmentSlot.serviceId === targetServiceId) && (!targetBranchId || firstFutureAppointmentSlot.branchId === targetBranchId) ? firstFutureAppointmentSlot : null;
+      const insertBeforeEntryId = futureAppointment?.queueEntryId && window.confirm(`Appointment queue number ${futureAppointment.queueNumber} is scheduled for ${new Date(futureAppointment.approvedStartTime ?? futureAppointment.requestedStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Add this customer before that appointment and move the appointment to the next number?`) ? futureAppointment.queueEntryId : undefined;
+      return joinQueueDraft(businessId, { customerId: lookupCustomer.id, clientProfileId: lookupProfile.id, branchId: targetBranchId, serviceId: targetServiceId, source: 'OPERATOR', insertBeforeEntryId });
     },
     onSuccess: (entry) => {
       queryClient.invalidateQueries({ queryKey: ['queues-today', businessId] });
@@ -504,6 +637,8 @@ export default function QueuesPage() {
       const selectedWalkInServiceId = walkInServiceId || serviceId;
       const selectedWalkInBranchId = walkInBranchId || branchId;
       if (!selectedWalkInServiceId) throw new Error('Select a service for the walk-in customer');
+      const futureAppointment = firstFutureAppointmentSlot && firstFutureAppointmentSlot.serviceId === selectedWalkInServiceId && (!selectedWalkInBranchId || firstFutureAppointmentSlot.branchId === selectedWalkInBranchId) ? firstFutureAppointmentSlot : null;
+      const insertBeforeEntryId = futureAppointment?.queueEntryId && window.confirm(`Appointment queue number ${futureAppointment.queueNumber} is scheduled for ${new Date(futureAppointment.approvedStartTime ?? futureAppointment.requestedStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Add this walk-in before that appointment and move the appointment to the next number?`) ? futureAppointment.queueEntryId : undefined;
 
       let customer: Customer;
       const existingCustomer = customersQuery.data?.find((item) => item.primaryPhone === walkInPhone.trim());
@@ -527,7 +662,8 @@ export default function QueuesPage() {
         clientProfileId: profile.id,
         branchId: selectedWalkInBranchId || undefined,
         serviceId: selectedWalkInServiceId,
-        source: 'OPERATOR'
+        source: 'OPERATOR',
+        insertBeforeEntryId
       });
     },
     onSuccess: (entry) => {
@@ -543,6 +679,30 @@ export default function QueuesPage() {
       setWalkInPhone('');
       setWalkInName('');
       setMessage(`Walk-in customer added as queue number ${entry.queueNumber}.`);
+    }
+  });
+
+  const appointmentCounterMutation = useMutation({
+    mutationFn: async ({ appointment, action }: { appointment: Appointment; action: 'approve' | 'reject' | 'cancel' }) => {
+      if (!businessId) throw new Error('Select a business first');
+      if (action === 'approve') {
+        return approveAppointment(businessId, appointment.id, {
+          approvedStartTime: appointment.requestedStartTime,
+          approvedEndTime: appointment.requestedEndTime,
+          source: 'OPERATOR'
+        });
+      }
+      if (action === 'reject') return rejectAppointment(businessId, appointment.id, { reason: 'Rejected at queue counter' });
+      return cancelAppointmentByOperator(businessId, appointment.id, { reason: 'Cancelled at queue counter' });
+    },
+    onSuccess: (appointment) => {
+      queryClient.invalidateQueries({ queryKey: ['queue-counter-appointments', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['appointments', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['queues-today', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['queues-today-summary', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['queue-entries', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['queue-summary-entries', businessId] });
+      setMessage(`Appointment ${appointment.status.toLowerCase().replaceAll('_', ' ')}.`);
     }
   });
 
@@ -563,7 +723,7 @@ export default function QueuesPage() {
       `}</style>
       <PageHeader title="Queues" description="Open queues, approve online requests, and manage live service flow." />
       {message ? <Card className="border-emerald-200 bg-emerald-50 text-sm text-emerald-700">{message}</Card> : null}
-      {[queuesQuery.error, entriesQuery?.error, pendingRequestsQuery.error, queueSessionMutation.error, actionMutation.error, manualJoinMutation.error, walkInMutation.error, slotApprovalMutation.error].filter(Boolean).map((error, index) => <ErrorState key={index} message={getErrorMessage(error)} />)}
+      {[queuesQuery.error, entriesQuery?.error, pendingRequestsQuery.error, appointmentsQuery.error, queueSessionMutation.error, actionMutation.error, manualJoinMutation.error, walkInMutation.error, slotApprovalMutation.error, appointmentCounterMutation.error].filter(Boolean).map((error, index) => <ErrorState key={index} message={getErrorMessage(error)} />)}
 
 
       <div className="grid gap-4">
@@ -665,7 +825,7 @@ export default function QueuesPage() {
             <div className="flex flex-wrap gap-2">
               <Badge tone={selectedQueue.isActive ? 'green' : 'slate'}>{selectedQueue.isActive ? 'OPEN' : 'CLOSED'}</Badge>
               {Object.entries(statusSummary).map(([status, count]) => <Badge key={status} tone="slate">{status}: {count}</Badge>)}
-              <Badge tone="teal">Priority: OPERATOR first</Badge>
+              <Badge tone="teal">Call order: queue number</Badge>
             </div>
             {entriesQuery?.isLoading ? <LoadingState message="Loading queue entries..." /> : null}
             {selectedQueueEntries.length === 0 ? <EmptyState title="No entries in this queue" /> : null}
@@ -681,6 +841,17 @@ export default function QueuesPage() {
           </div>
         )}
       </SectionCard>
+
+      <QueueAppointmentCounter
+        appointments={counterAppointments}
+        customers={customersQuery.data ?? []}
+        branches={branches}
+        services={services}
+        busyAppointmentId={appointmentCounterMutation.isPending ? appointmentCounterMutation.variables?.appointment.id : null}
+        onApprove={(appointment) => appointmentCounterMutation.mutate({ appointment, action: 'approve' })}
+        onReject={(appointment) => appointmentCounterMutation.mutate({ appointment, action: 'reject' })}
+        onCancel={(appointment) => appointmentCounterMutation.mutate({ appointment, action: 'cancel' })}
+      />
 
       <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
         <div className="grid gap-6">

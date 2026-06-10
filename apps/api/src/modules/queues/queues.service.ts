@@ -27,6 +27,12 @@ export class QueuesService {
       if (!entry) {
         throw new BadRequestException('Queue is not open yet. Please contact staff or try again later.');
       }
+      if (data.insertBeforeEntryId) {
+        await this.createQueueNotification(businessId, data.insertBeforeEntryId, 'QUEUE_POSITION_UPDATED', {
+          alert_type: 'QUEUE_NUMBER_CHANGED',
+          message: 'Your queue number was updated because the counter inserted an earlier customer before your appointment time.'
+        });
+      }
       return entry;
     } catch (error) {
       if (error instanceof BadRequestException) {
@@ -36,9 +42,9 @@ export class QueuesService {
     }
   }
 
-  async confirmEntry(businessId: string, entryId: string, _data: ConfirmQueueEntryDto): Promise<QueueEntry> {
+  async confirmEntry(businessId: string, entryId: string, data: ConfirmQueueEntryDto): Promise<QueueEntry> {
     try {
-      const result = await this.queuesRepository.confirmDraftEntry(businessId, entryId);
+      const result = await this.queuesRepository.confirmDraftEntry(businessId, entryId, data);
 
       if (!result.entry) {
         throw new NotFoundException('Queue entry not found');
@@ -50,6 +56,13 @@ export class QueuesService {
 
       if (result.failure === 'INVALID_STATUS') {
         throw new BadRequestException(`Queue entry cannot be confirmed from status ${result.currentStatus}`);
+      }
+
+      if (data.insertBeforeEntryId) {
+        await this.createQueueNotification(businessId, data.insertBeforeEntryId, 'QUEUE_POSITION_UPDATED', {
+          alert_type: 'QUEUE_NUMBER_CHANGED',
+          message: 'Your queue number was updated because the counter confirmed an earlier customer before your appointment time.'
+        });
       }
 
       await this.createQueueNotification(businessId, result.entry.id, 'QUEUE_CONFIRMED');

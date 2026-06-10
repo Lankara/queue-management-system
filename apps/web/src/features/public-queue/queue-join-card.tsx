@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -29,7 +30,8 @@ export function QueueJoinCard({
   isLoading,
   error,
   warning,
-  preselectedFromQr
+  preselectedFromQr,
+  appointmentHref
 }: {
   business: PublicBusiness;
   branchId: string;
@@ -41,6 +43,7 @@ export function QueueJoinCard({
   error?: string | null;
   warning?: string | null;
   preselectedFromQr?: boolean;
+  appointmentHref?: string;
 }) {
   const branch = business.branches.find((item) => item.id === branchId);
   const availableServices = branchId ? business.services.filter((item) => serviceBelongsToBranch(item, branchId, business.branches)) : business.services;
@@ -60,7 +63,10 @@ export function QueueJoinCard({
       <Select label="Branch" placeholder="No branch" value={branchId} onChange={(event) => onBranchChange(event.target.value)} options={business.branches.map((item) => ({ label: item.name, value: item.id }))} />
       <Select label="Service" placeholder={availableServices.length === 0 ? 'No Service' : branchId ? 'Select service' : 'Select branch first or choose any service'} value={serviceId} error={error ?? undefined} disabled={availableServices.length === 0} onChange={(event) => onServiceChange(event.target.value)} options={availableServices.map((item) => ({ label: item.name, value: item.id }))} />
       {error ? <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{error}</div> : null}
-      <Button disabled={!serviceId} isLoading={isLoading} onClick={onJoin}>Join queue</Button>
+      <div className="grid grid-cols-2 gap-2">
+        <Button className="h-10 px-3 text-sm" disabled={!serviceId} isLoading={isLoading} onClick={onJoin}>Join queue</Button>
+        <Link className="inline-flex h-10 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800" href={appointmentHref ?? `/q/${business.slug}/appointment`}>Book Appointment</Link>
+      </div>
     </Card>
   );
 }

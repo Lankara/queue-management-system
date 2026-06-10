@@ -17,6 +17,7 @@ export interface QueueJoinPayload {
   customerId: string;
   clientProfileId: string;
   source: 'OPERATOR';
+  insertBeforeEntryId?: string;
 }
 
 export function listTodayQueues(businessId: string, filters: TodayQueuesFilters = {}): Promise<Queue[]> {
@@ -52,9 +53,14 @@ export function listPendingQueueRequests(businessId: string, filters: TodayQueue
   return apiGet<QueueEntry[]>(`/businesses/${businessId}/queues/pending-requests${suffix}`);
 }
 
-export function approveQueueEntry(businessId: string, entryId: string): Promise<QueueEntry> {
-  return apiPatch<QueueEntry, Record<string, never>>(`/businesses/${businessId}/queue-entries/${entryId}/approve`, {});
+export interface ConfirmQueueEntryPayload {
+  insertBeforeEntryId?: string;
 }
+
+export function approveQueueEntry(businessId: string, entryId: string, data: ConfirmQueueEntryPayload = {}): Promise<QueueEntry> {
+  return apiPatch<QueueEntry, ConfirmQueueEntryPayload>(`/businesses/${businessId}/queue-entries/${entryId}/approve`, data);
+}
+
 export function listQueueEntries(businessId: string, queueId: string): Promise<QueueEntry[]> {
   return apiGet<QueueEntry[]>(`/businesses/${businessId}/queues/${queueId}/entries`);
 }
@@ -63,10 +69,9 @@ export function joinQueueDraft(businessId: string, data: QueueJoinPayload): Prom
   return apiPost<QueueEntry, QueueJoinPayload>(`/businesses/${businessId}/queues/join-draft`, data);
 }
 
-export function confirmQueueEntry(businessId: string, entryId: string): Promise<QueueEntry> {
-  return apiPatch<QueueEntry, Record<string, never>>(`/businesses/${businessId}/queue-entries/${entryId}/confirm`, {});
+export function confirmQueueEntry(businessId: string, entryId: string, data: ConfirmQueueEntryPayload = {}): Promise<QueueEntry> {
+  return apiPatch<QueueEntry, ConfirmQueueEntryPayload>(`/businesses/${businessId}/queue-entries/${entryId}/confirm`, data);
 }
-
 export function rejectQueueEntry(businessId: string, entryId: string): Promise<QueueEntry> {
   return apiPatch<QueueEntry, { reason?: string }>(`/businesses/${businessId}/queue-entries/${entryId}/reject`, {});
 }

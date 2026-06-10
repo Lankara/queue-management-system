@@ -1,7 +1,14 @@
-import { IsOptional, IsUUID } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
+import { IsPostgresUuid } from '../../../common/validators/postgres-uuid.validator';
 
 export class ConfirmQueueEntryDto {
   @IsOptional()
-  @IsUUID()
+  @IsString()
+  @IsPostgresUuid('confirmedBy')
   confirmedBy?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsPostgresUuid('insertBeforeEntryId')
+  insertBeforeEntryId?: string;
 }

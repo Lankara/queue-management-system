@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PoolClient } from 'pg';
 import { formatQueueNumber } from '../../common/utils/queue-number.util';
 import { DatabaseService } from '../../database/database.service';
+import { ConfirmQueueEntryDto } from './dto/confirm-queue-entry.dto';
 import { CreateQueueJoinDto } from './dto/create-queue-join.dto';
 import { Queue, QueueEntry, QueuePosition, QueueStatus } from './interfaces/queue.interface';
 
@@ -85,10 +86,18 @@ export class QueuesRepository {
         await client.query('ROLLBACK');
         return null;
       }
-      const nextSequence = Math.max(queue.lastIssuedNumber + 1, 1);
+      const insertBeforeEntry = data.insertBeforeEntryId
+        ? await this.findInsertBeforeEntry(client, businessId, queue.id, serviceDate, data.insertBeforeEntryId)
+        : null;
+      const nextSequence = insertBeforeEntry?.queue_sequence ?? Math.max(queue.lastIssuedNumber + 1, 1);
       const queueNumber = formatQueueNumber(nextSequence, queueNumberLength);
 
-      await client.query(`UPDATE queues SET last_issued_number = $2, updated_at = now() WHERE id = $1`, [queue.id, nextSequence]);
+      if (insertBeforeEntry) {
+        await this.shiftQueueEntriesFromSequence(client, businessId, queue.id, serviceDate, nextSequence, queueNumberLength);
+      }
+
+      const lastIssuedNumber = insertBeforeEntry ? Math.max(queue.lastIssuedNumber + 1, nextSequence + 1) : nextSequence;
+      await client.query(`UPDATE queues SET last_issued_number = $2, updated_at = now() WHERE id = $1`, [queue.id, lastIssuedNumber]);
 
       const initialStatus: QueueStatus = data.source === 'OPERATOR' ? 'CONFIRMED' : 'DRAFT';
       const result = await client.query<QueueEntryRow>(
@@ -108,7 +117,7 @@ export class QueuesRepository {
     }
   }
 
-  async confirmDraftEntry(businessId: string, entryId: string): Promise<ConfirmEntryResult> {
+  async confirmDraftEntry(businessId: string, entryId: string, data: ConfirmQueueEntryDto = {}): Promise<ConfirmEntryResult> {
     const client = await this.databaseService.getPool().connect();
 
     try {
@@ -148,6 +157,23 @@ export class QueuesRepository {
       if (isBanned && isOnlineSource) {
         await client.query('ROLLBACK');
         return { entry, failure: 'BANNED' };
+      }
+
+      const insertBeforeEntry = data.insertBeforeEntryId
+        ? await this.findInsertBeforeEntry(client, businessId, entry.queueId, entry.serviceDate, data.insertBeforeEntryId)
+        : null;
+      const queueNumberLength = insertBeforeEntry ? await this.getQueueNumberLength(client, businessId) : null;
+
+      if (insertBeforeEntry && queueNumberLength) {
+        await this.moveDraftEntryBeforeFutureAppointment(
+          client,
+          businessId,
+          entry.queueId,
+          entry.serviceDate,
+          entry.id,
+          insertBeforeEntry.queue_sequence,
+          queueNumberLength
+        );
       }
 
       const result = await client.query<QueueEntryRow>(
@@ -379,13 +405,11 @@ export class QueuesRepository {
       }
       const entryResult = await client.query<QueueEntryRow>(
         `SELECT ${ENTRY_COLUMNS}
-         FROM queue_entries
-         WHERE business_id = $1 AND queue_id = $2 AND status IN ('CONFIRMED', 'WAITING')
-         ORDER BY
-           CASE WHEN source = 'OPERATOR' THEN 1 WHEN source = 'HARDWARE' THEN 2 ELSE 3 END ASC,
-           queue_sequence ASC
-         LIMIT 1
-         FOR UPDATE`,
+       FROM queue_entries
+       WHERE business_id = $1 AND queue_id = $2 AND status IN ('CONFIRMED', 'WAITING')
+       ORDER BY queue_sequence ASC
+       LIMIT 1
+       FOR UPDATE`,
         [businessId, queueId]
       );
       const entry = this.mapEntryRow(entryResult.rows[0]);
@@ -424,9 +448,7 @@ export class QueuesRepository {
       `SELECT ${ENTRY_COLUMNS}
        FROM queue_entries
        WHERE business_id = $1 AND queue_id = $2 AND status IN ('CONFIRMED', 'WAITING')
-       ORDER BY
-         CASE WHEN source = 'OPERATOR' THEN 1 WHEN source = 'HARDWARE' THEN 2 ELSE 3 END ASC,
-         queue_sequence ASC
+       ORDER BY queue_sequence ASC
        LIMIT 1`,
       [businessId, queueId]
     );
@@ -593,6 +615,126 @@ export class QueuesRepository {
     );
     return this.mapQueueRow(existing.rows[0]);
   }
+
+  private async findInsertBeforeEntry(
+    client: PoolClient,
+    businessId: string,
+    queueId: string,
+    serviceDate: string,
+    entryId: string
+  ): Promise<QueueEntryRow | null> {
+    const result = await client.query<QueueEntryRow>(
+      `SELECT ${ENTRY_COLUMNS.split(', ').map((column) => `qe.${column}`).join(', ')}
+       FROM queue_entries qe
+       JOIN appointments a ON a.queue_entry_id = qe.id AND a.business_id = qe.business_id
+       WHERE qe.business_id = $1
+         AND qe.queue_id = $2
+         AND qe.service_date = $3
+         AND qe.id = $4
+         AND qe.status IN ('CONFIRMED', 'WAITING')
+         AND COALESCE(a.approved_start_time, a.requested_start_time) > now()
+       FOR UPDATE OF qe`,
+      [businessId, queueId, serviceDate, entryId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  private async moveDraftEntryBeforeFutureAppointment(
+    client: PoolClient,
+    businessId: string,
+    queueId: string,
+    serviceDate: string,
+    entryId: string,
+    targetSequence: number,
+    queueNumberLength: number
+  ): Promise<void> {
+    const temporaryOffset = 200000;
+    await client.query(
+      `UPDATE queue_entries
+       SET queue_sequence = queue_sequence + $5,
+           queue_number = (queue_sequence + $5)::text,
+           updated_at = now()
+       WHERE business_id = $1
+         AND queue_id = $2
+         AND service_date = $3
+         AND id = $4
+         AND status = 'DRAFT'`,
+      [businessId, queueId, serviceDate, entryId, temporaryOffset]
+    );
+
+    await this.shiftQueueEntriesFromSequence(client, businessId, queueId, serviceDate, targetSequence, queueNumberLength);
+
+    await client.query(
+      `UPDATE queue_entries
+       SET queue_sequence = $4,
+           queue_number = $5,
+           updated_at = now()
+       WHERE business_id = $1
+         AND queue_id = $2
+         AND service_date = $3
+         AND id = $6
+         AND status = 'DRAFT'`,
+      [businessId, queueId, serviceDate, targetSequence, formatQueueNumber(targetSequence, queueNumberLength), entryId]
+    );
+
+    const maxSequenceResult = await client.query<{ max_sequence: number | null }>(
+      `SELECT MAX(queue_sequence)::int AS max_sequence
+       FROM queue_entries
+       WHERE business_id = $1 AND queue_id = $2 AND service_date = $3`,
+      [businessId, queueId, serviceDate]
+    );
+
+    await client.query(
+      `UPDATE queues SET last_issued_number = GREATEST(last_issued_number, $3), updated_at = now() WHERE business_id = $1 AND id = $2`,
+      [businessId, queueId, maxSequenceResult.rows[0]?.max_sequence ?? targetSequence]
+    );
+  }
+  private async shiftQueueEntriesFromSequence(
+    client: PoolClient,
+    businessId: string,
+    queueId: string,
+    serviceDate: string,
+    fromSequence: number,
+    queueNumberLength: number
+  ): Promise<void> {
+    const temporaryOffset = 100000;
+    await client.query(
+      `UPDATE queue_entries
+       SET queue_sequence = queue_sequence + $5,
+           queue_number = (queue_sequence + $5)::text,
+           updated_at = now()
+       WHERE business_id = $1
+         AND queue_id = $2
+         AND service_date = $3
+         AND queue_sequence >= $4
+         AND status IN ('DRAFT', 'CONFIRMED', 'WAITING')`,
+      [businessId, queueId, serviceDate, fromSequence, temporaryOffset]
+    );
+
+    const shifted = await client.query<{ id: string; queue_sequence: number }>(
+      `SELECT id, queue_sequence - $5 AS queue_sequence
+       FROM queue_entries
+       WHERE business_id = $1
+         AND queue_id = $2
+         AND service_date = $3
+         AND queue_sequence >= ($4 + $5)
+       ORDER BY queue_sequence ASC`,
+      [businessId, queueId, serviceDate, fromSequence, temporaryOffset]
+    );
+
+    for (const row of shifted.rows) {
+      const nextSequence = row.queue_sequence + 1;
+      await client.query(
+        `UPDATE queue_entries
+         SET queue_sequence = $4,
+             queue_number = $5,
+             updated_at = now()
+         WHERE business_id = $1 AND queue_id = $2 AND id = $3`,
+        [businessId, queueId, row.id, nextSequence, formatQueueNumber(nextSequence, queueNumberLength)]
+      );
+    }
+  }
+
   private async findEntryById(businessId: string, entryId: string): Promise<QueueEntry | null> {
     const result = await this.databaseService.query<QueueEntryRow>(
       `SELECT ${ENTRY_COLUMNS} FROM queue_entries WHERE business_id = $1 AND id = $2 LIMIT 1`,

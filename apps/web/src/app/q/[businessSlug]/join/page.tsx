@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card';
 import { ErrorState, LoadingState } from '@/components/ui/state';
 import { ClientProfilePicker } from '@/features/public-queue/client-profile-picker';
 import { CustomerConfirmationCard } from '@/features/public-queue/customer-confirmation-card';
+import { CurrentQueueBookingsCard } from '@/features/public-queue/current-queue-bookings-card';
 import { PhoneLookupForm, PhoneLookupValues } from '@/features/public-queue/phone-lookup-form';
 import { PublicClientProfileForm, PublicClientProfileFormValues } from '@/features/public-queue/public-client-profile-form';
 import { getPublicQueueQueryParams } from '@/features/public-queue/public-query-params';
@@ -28,17 +29,22 @@ import {
 } from '@/features/public-queue/public-queue.api';
 import { usePublicQueueStore } from '@/store/public-queue-store';
 import { PublicBranchSummary, PublicCustomer, PublicServiceSummary } from '@/types/public-queue';
-import { QueueEntry } from '@/types/queue';
+import { QueueEntry, QueuePosition } from '@/types/queue';
 
 function getErrorMessage(error: unknown) {
   if (error instanceof AxiosError) {
     const message = error.response?.data?.message;
     if (Array.isArray(message)) return message.join(', ');
     if (typeof message === 'string') return message;
+    if (error.response?.status === 404) return 'This saved customer session is no longer valid for this business. Please enter your phone number again.';
     return error.message;
   }
 
   return 'Request failed';
+}
+
+function isAxiosStatus(error: unknown, status: number) {
+  return error instanceof AxiosError && error.response?.status === status;
 }
 
 function formatQueueStatus(status: string) {
@@ -68,12 +74,16 @@ export default function PublicJoinPage() {
   const searchParams = useSearchParams();
   const queryParams = useMemo(() => getPublicQueueQueryParams(searchParams), [searchParams]);
   const setBusiness = usePublicQueueStore((state) => state.setBusiness);
+  const storedBusiness = usePublicQueueStore((state) => state.business);
   const customer = usePublicQueueStore((state) => state.customer);
   const clientProfile = usePublicQueueStore((state) => state.clientProfile);
   const queueEntry = usePublicQueueStore((state) => state.queueEntry);
+  const queueBookings = usePublicQueueStore((state) => state.queueBookings ?? []);
   const setCustomer = usePublicQueueStore((state) => state.setCustomer);
   const setClientProfile = usePublicQueueStore((state) => state.setClientProfile);
   const setQueueEntry = usePublicQueueStore((state) => state.setQueueEntry);
+  const addQueueBooking = usePublicQueueStore((state) => state.addQueueBooking);
+  const removeQueueBooking = usePublicQueueStore((state) => state.removeQueueBooking);
   const selectedBranchId = usePublicQueueStore((state) => state.selectedBranchId);
   const selectedServiceId = usePublicQueueStore((state) => state.selectedServiceId);
   const setBranchAndService = usePublicQueueStore((state) => state.setBranchAndService);
@@ -84,8 +94,14 @@ export default function PublicJoinPage() {
   const [joinValidationError, setJoinValidationError] = useState<string | null>(null);
   const [selectionWarning, setSelectionWarning] = useState<string | null>(null);
   const [preselectedFromQr, setPreselectedFromQr] = useState(false);
+  const [bookingPositions, setBookingPositions] = useState<Record<string, QueuePosition | undefined>>({});
+  const [bookingCheckMessage, setBookingCheckMessage] = useState<string | null>(null);
   const businessQuery = useQuery({ queryKey: ['public-business', params.businessSlug], queryFn: () => getPublicBusiness(params.businessSlug) });
   const business = businessQuery.data;
+  const isCurrentBusinessSession = Boolean(business && storedBusiness?.id === business.id);
+  const currentCustomer = isCurrentBusinessSession ? customer : null;
+  const currentClientProfile = isCurrentBusinessSession ? clientProfile : null;
+  const currentQueueEntry = isCurrentBusinessSession ? queueEntry : null;
 
   useEffect(() => {
     if (!business) return;
@@ -131,31 +147,67 @@ export default function PublicJoinPage() {
     }
   }, [business, queryParams, selectedBranchId, selectedServiceId, setBranchAndService]);
 
-  const profilesQuery = useQuery({ queryKey: ['public-client-profiles', params.businessSlug, customer?.id], queryFn: () => listPublicClientProfiles(params.businessSlug, customer?.id as string), enabled: Boolean(customer?.id) });
-  const canUseSavedQueueEntry = Boolean(business && queueEntry && queueEntry.businessId === business.id);
+  const profilesQuery = useQuery({ queryKey: ['public-client-profiles', params.businessSlug, currentCustomer?.id], queryFn: () => listPublicClientProfiles(params.businessSlug, currentCustomer?.id as string), enabled: Boolean(currentCustomer?.id) });
+  const canUseSavedQueueEntry = Boolean(business && currentQueueEntry && currentQueueEntry.businessId === business.id);
   const queuePositionQuery = useQuery({
-    queryKey: ['public-queue-position-before-confirm', params.businessSlug, queueEntry?.id],
-    queryFn: () => getPublicQueuePosition(params.businessSlug, queueEntry?.id as string),
-    enabled: canUseSavedQueueEntry && queueEntry?.status !== 'DRAFT',
+    queryKey: ['public-queue-position-before-confirm', params.businessSlug, currentQueueEntry?.id],
+    queryFn: () => getPublicQueuePosition(params.businessSlug, currentQueueEntry?.id as string),
+    enabled: canUseSavedQueueEntry && currentQueueEntry?.status !== 'DRAFT',
     refetchInterval: 15000
   });
   const phoneMutation = useMutation({ mutationFn: (values: PhoneLookupValues) => findPublicCustomerByPhone(params.businessSlug, values.phone), onMutate: (values) => setPhoneForRegistration(values.phone), onSuccess: setFoundCustomer });
   const customerMutation = useMutation({ mutationFn: (values: PhoneLookupValues) => createPublicCustomer(params.businessSlug, { primaryPhone: values.phone, preferredLanguage: language }), onSuccess: setCustomer });
-  const profileMutation = useMutation({ mutationFn: (values: PublicClientProfileFormValues) => createPublicClientProfile(params.businessSlug, customer?.id as string, { ...values, ageYears: values.ageYears === '' ? undefined : Number(values.ageYears) }), onSuccess: (profile) => { setClientProfile(profile); setShowNewProfile(false); } });
-  const joinMutation = useMutation({ mutationFn: () => joinPublicQueueDraft(params.businessSlug, { branchId: selectedBranchId ?? undefined, serviceId: selectedServiceId as string, customerId: customer?.id as string, clientProfileId: clientProfile?.id as string, source: 'QR' }), onSuccess: setQueueEntry });
-  const confirmMutation = useMutation({
-    mutationFn: () => confirmPublicQueueEntry(params.businessSlug, queueEntry?.id as string),
-    onSuccess: (entry) => { setQueueEntry(entry); router.push(`/q/${params.businessSlug}/queue/${entry.id}`); }
+  const profileMutation = useMutation({ mutationFn: (values: PublicClientProfileFormValues) => createPublicClientProfile(params.businessSlug, currentCustomer?.id as string, { ...values, ageYears: values.ageYears === '' ? undefined : Number(values.ageYears) }), onSuccess: (profile) => { setClientProfile(profile); setShowNewProfile(false); } });
+  const joinMutation = useMutation({
+    mutationFn: () => joinPublicQueueDraft(params.businessSlug, { branchId: selectedBranchId ?? undefined, serviceId: selectedServiceId as string, customerId: currentCustomer?.id as string, clientProfileId: currentClientProfile?.id as string, source: 'QR' }),
+    onSuccess: (entry) => {
+      setQueueEntry(entry);
+      addQueueBooking(entry, params.businessSlug);
+    },
+    onError: (error) => {
+      if (isAxiosStatus(error, 404)) {
+        setCustomer(null);
+        setClientProfile(null);
+        setQueueEntry(null);
+      }
+    }
   });
-  const rejectMutation = useMutation({ mutationFn: () => rejectPublicQueueEntry(params.businessSlug, queueEntry?.id as string), onSuccess: () => setQueueEntry(null) });
-  const queueStatus = queuePositionQuery.data?.status ?? queueEntry?.status;
+  const confirmMutation = useMutation({
+    mutationFn: () => confirmPublicQueueEntry(params.businessSlug, currentQueueEntry?.id as string),
+    onSuccess: (entry) => { setQueueEntry(entry); addQueueBooking(entry, params.businessSlug); router.push(`/q/${params.businessSlug}/queue/${entry.id}`); }
+  });
+  const rejectMutation = useMutation({ mutationFn: () => rejectPublicQueueEntry(params.businessSlug, currentQueueEntry?.id as string), onSuccess: () => { if (currentQueueEntry?.id) removeQueueBooking(currentQueueEntry.id); setQueueEntry(null); } });
+  const bookingCheckMutation = useMutation({
+    mutationFn: (entryId: string) => getPublicQueuePosition(params.businessSlug, entryId, { logNotification: true }),
+    onSuccess: (position, entryId) => {
+      setBookingPositions((current) => ({ ...current, [entryId]: position }));
+      setBookingCheckMessage(`Ongoing number: ${position.currentServingNumber ?? 'Not started yet'}.`);
+    },
+    onError: (error, entryId) => {
+      if (isAxiosStatus(error, 404)) removeQueueBooking(entryId);
+      setBookingCheckMessage('Could not refresh that booking. It may no longer be active.');
+    }
+  });
+  const queueStatus = queuePositionQuery.data?.status ?? currentQueueEntry?.status;
+  const appointmentQuery = new URLSearchParams();
+  if (selectedBranchId) appointmentQuery.set('branchId', selectedBranchId);
+  if (selectedServiceId) appointmentQuery.set('serviceId', selectedServiceId);
+  const appointmentHref = `/q/${params.businessSlug}/appointment${appointmentQuery.toString() ? `?${appointmentQuery.toString()}` : ''}`;
+
+  useEffect(() => {
+    if (isAxiosStatus(profilesQuery.error, 404)) {
+      setCustomer(null);
+      setClientProfile(null);
+      setQueueEntry(null);
+    }
+  }, [profilesQuery.error, setClientProfile, setCustomer, setQueueEntry]);
 
   function handleJoinQueue() {
-    if (!customer) {
+    if (!currentCustomer) {
       setJoinValidationError('Enter or register your phone number before joining the queue.');
       return;
     }
-    if (!clientProfile) {
+    if (!currentClientProfile) {
       setJoinValidationError('Select or create a client profile before joining the queue.');
       return;
     }
@@ -174,12 +226,14 @@ export default function PublicJoinPage() {
   return (
     <PublicLayout title={business.name} subtitle="Join the queue in a few quick steps.">
       {[phoneMutation.error, customerMutation.error, profileMutation.error, joinMutation.error, confirmMutation.error, rejectMutation.error].filter(Boolean).map((error, index) => <ErrorState key={index} message={getErrorMessage(error)} />)}
-      {!customer && !foundCustomer ? <Card className="grid gap-4"><h2 className="font-semibold">Enter your phone number</h2><PhoneLookupForm isLoading={phoneMutation.isPending} onSubmit={(values) => phoneMutation.mutate(values)} />{phoneMutation.isError ? <Button variant="secondary" isLoading={customerMutation.isPending} onClick={() => customerMutation.mutate({ phone: phoneForRegistration })}>Register this phone</Button> : null}</Card> : null}
-      {foundCustomer && !customer ? <CustomerConfirmationCard customer={foundCustomer} onConfirm={() => setCustomer(foundCustomer)} onReject={() => setFoundCustomer(null)} /> : null}
-      {customer && !clientProfile ? <Card className="grid gap-4"><h2 className="font-semibold">Who is joining?</h2>{profilesQuery.isLoading ? <LoadingState /> : <ClientProfilePicker profiles={profilesQuery.data ?? []} selectedId={undefined} onSelect={setClientProfile} onCreateNew={() => setShowNewProfile(true)} />}{showNewProfile ? <PublicClientProfileForm isLoading={profileMutation.isPending} onSubmit={(values) => profileMutation.mutate(values)} /> : null}</Card> : null}
-      {customer && clientProfile && !queueEntry ? <QueueJoinCard business={business} branchId={selectedBranchId ?? ''} serviceId={selectedServiceId ?? ''} error={joinValidationError} warning={selectionWarning} preselectedFromQr={preselectedFromQr} onBranchChange={(nextBranchId) => { setJoinValidationError(null); setSelectionWarning(null); setPreselectedFromQr(false); const selectedService = business.services.find((service) => service.id === selectedServiceId); const nextServiceId = nextBranchId && selectedService && !serviceBelongsToBranch(selectedService, nextBranchId, business.branches) ? null : selectedServiceId; setBranchAndService(nextBranchId || null, nextServiceId); }} onServiceChange={(nextServiceId) => { setJoinValidationError(null); setSelectionWarning(null); setPreselectedFromQr(false); const selectedService = business.services.find((service) => service.id === nextServiceId); setBranchAndService(selectedService?.branchId ?? selectedBranchId, nextServiceId || null); }} isLoading={joinMutation.isPending} onJoin={handleJoinQueue} /> : null}
-      {canUseSavedQueueEntry && queueEntry && queueStatus === 'DRAFT' ? <Card className="grid gap-4 text-center"><p className="text-sm text-slate-600">Your queue request number</p><p className="text-5xl font-bold text-slate-950">{queueEntry.queueNumber}</p><div className="grid grid-cols-2 gap-3"><Button isLoading={confirmMutation.isPending} onClick={() => confirmMutation.mutate()}>Send request</Button><Button variant="secondary" isLoading={rejectMutation.isPending} onClick={() => rejectMutation.mutate()}>Reject</Button></div><Button variant="ghost" onClick={() => setQueueEntry(null)}>Start a new request</Button></Card> : null}
-      {canUseSavedQueueEntry && queueEntry && queueStatus && queueStatus !== 'DRAFT' ? <Card className="grid gap-4 text-center"><p className="text-sm text-slate-600">This queue entry is already {formatQueueStatus(queueStatus)}.</p><p className="text-5xl font-bold text-slate-950">{queueEntry.queueNumber}</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Button onClick={() => router.push(`/q/${params.businessSlug}/queue/${queueEntry.id}`)}>View status</Button><Button variant="secondary" onClick={() => setQueueEntry(null)}>Start new queue</Button></div></Card> : null}
+      {queueBookings.length > 0 ? <CurrentQueueBookingsCard business={business} bookings={queueBookings} positions={bookingPositions} checkingId={bookingCheckMutation.isPending ? bookingCheckMutation.variables : null} onCheck={(booking) => bookingCheckMutation.mutate(booking.id)} /> : null}
+      {bookingCheckMessage ? <Card className="p-3 text-center text-sm text-teal-800">{bookingCheckMessage}</Card> : null}
+      {!currentCustomer && !foundCustomer ? <Card className="grid gap-4"><h2 className="font-semibold">Enter your phone number</h2><PhoneLookupForm isLoading={phoneMutation.isPending} onSubmit={(values) => phoneMutation.mutate(values)} />{phoneMutation.isError ? <Button variant="secondary" isLoading={customerMutation.isPending} onClick={() => customerMutation.mutate({ phone: phoneForRegistration })}>Register this phone</Button> : null}</Card> : null}
+      {foundCustomer && !currentCustomer ? <CustomerConfirmationCard customer={foundCustomer} onConfirm={() => setCustomer(foundCustomer)} onReject={() => setFoundCustomer(null)} /> : null}
+      {currentCustomer && !currentClientProfile ? <Card className="grid gap-4"><h2 className="font-semibold">Who is joining?</h2>{profilesQuery.isLoading ? <LoadingState /> : <ClientProfilePicker profiles={profilesQuery.data ?? []} selectedId={undefined} onSelect={setClientProfile} onCreateNew={() => setShowNewProfile(true)} />}{showNewProfile ? <PublicClientProfileForm isLoading={profileMutation.isPending} onSubmit={(values) => profileMutation.mutate(values)} /> : null}</Card> : null}
+      {currentCustomer && currentClientProfile && !currentQueueEntry ? <QueueJoinCard business={business} branchId={selectedBranchId ?? ''} serviceId={selectedServiceId ?? ''} error={joinValidationError} warning={selectionWarning} preselectedFromQr={preselectedFromQr} appointmentHref={appointmentHref} onBranchChange={(nextBranchId) => { setJoinValidationError(null); setSelectionWarning(null); setPreselectedFromQr(false); const selectedService = business.services.find((service) => service.id === selectedServiceId); const nextServiceId = nextBranchId && selectedService && !serviceBelongsToBranch(selectedService, nextBranchId, business.branches) ? null : selectedServiceId; setBranchAndService(nextBranchId || null, nextServiceId); }} onServiceChange={(nextServiceId) => { setJoinValidationError(null); setSelectionWarning(null); setPreselectedFromQr(false); const selectedService = business.services.find((service) => service.id === nextServiceId); setBranchAndService(selectedService?.branchId ?? selectedBranchId, nextServiceId || null); }} isLoading={joinMutation.isPending} onJoin={handleJoinQueue} /> : null}
+      {canUseSavedQueueEntry && currentQueueEntry && queueStatus === 'DRAFT' ? <Card className="grid gap-4 text-center"><p className="text-sm text-slate-600">Your queue request number</p><p className="text-5xl font-bold text-slate-950">{currentQueueEntry.queueNumber}</p><div className="grid grid-cols-2 gap-3"><Button isLoading={confirmMutation.isPending} onClick={() => confirmMutation.mutate()}>Send request</Button><Button variant="secondary" isLoading={rejectMutation.isPending} onClick={() => rejectMutation.mutate()}>Reject</Button></div><Button variant="ghost" onClick={() => setQueueEntry(null)}>Start a new request</Button></Card> : null}
+      {canUseSavedQueueEntry && currentQueueEntry && queueStatus && queueStatus !== 'DRAFT' ? <Card className="grid gap-4 text-center"><p className="text-sm text-slate-600">This queue entry is already {formatQueueStatus(queueStatus)}.</p><p className="text-5xl font-bold text-slate-950">{currentQueueEntry.queueNumber}</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Button onClick={() => router.push(`/q/${params.businessSlug}/queue/${currentQueueEntry.id}`)}>View status</Button><Button variant="secondary" onClick={() => setQueueEntry(null)}>Start new queue</Button></div></Card> : null}
       <Link className="text-center text-sm text-slate-500" href={`/q/${business.slug}`}>Back to language selection</Link>
     </PublicLayout>
   );
